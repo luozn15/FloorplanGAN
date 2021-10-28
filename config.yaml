@@ -1,0 +1,15 @@
+SYSTEM:
+  NUM_GPUS: 2
+  NUM_WORKERS: 4
+DATASET:
+  NAME: "rplan"
+  SUBSET: "names_0-1_1-1_2-1_3-1_4-0_5-0_6-0_7-1_8-0_9-1.pkl"
+  BATCHSIZE: 128
+TRAIN:
+  LEARNING_RATE: 0.00002
+  NUM_EPOCHS: 3000
+TENSORBOARD:
+  SAVE_INTERVAL: 100
+PATH:
+  Z_FILE: "fixed_z/fixed_xyaw_rplan_0320.pkl"
+  LOG_DIR: "runs_rplan"

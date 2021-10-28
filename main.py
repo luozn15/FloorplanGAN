@@ -2,7 +2,7 @@
 #
 # 改为WGAN-GP
 #####################################################
-import scipy
+import yaml
 import os
 import sys
 import socket
@@ -14,9 +14,10 @@ from datetime import datetime
 import time
 from tqdm import tqdm
 
+from config import get_cfg
 from dataset import generate_random_layout, wireframeDataset_Rplan
-from models import Generator_branch, Discriminator_visual, weight_init, renderer_g2v
-from utils import bounds_check, get_figure, draw_table
+from models import Generator, WireframeDiscriminator, weight_init, renderer_g2v
+#from utils import bounds_check, get_figure, draw_table
 
 import torch
 import torch.nn as nn
@@ -26,62 +27,63 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
 
-def main(argv):
-    #########################################################################################################
-    dataset_name = 'rplan'
-    rooms = None
-    subset_name = 'names_0-1_1-1_2-1_3-1_4-0_5-0_6-0_7-1_8-0_9-1.pkl'
-    #fixed_z_file = './fixed_z/fixed_xyaw_{0}_0320.pkl'.format(dataset_name)
-    fixed_z_file = './fixed_z/fixed_xywh_{0}_{1}'.format(
-        dataset_name, subset_name)
-    annotation = '''
-        2021-04-27
-        房间数固定
-    '''
-##########################################################################################################
-    hostname = socket.gethostname()
-    if hostname == 'ubuntuStation':
-        path = '../../data_FloorPlan'
+def setup(args):
+    """
+    Create configs and perform basic setups.
+    """
+    cfg = get_cfg()
+    cfg.merge_from_file("config.yaml")
+    #fixed_z_file = './fixed_z/fixed_xywh_{0}_{1}'.format(dataset_name, subset_name)
+
+    cfg.HOSTNAME = socket.gethostname()
+    if cfg.HOSTNAME == 'ubuntuStation':
         path_rplan = '../../data_RPLAN/pkls'
-    elif hostname == 'DESKTOP-HRFSC59':
+    elif cfg.HOSTNAME == 'DESKTOP-HRFSC59':
         path = 'D:\\luozn\\data_FloorPlan'
         path_rplan = 'D:\\luozn\\data_RPLAN\\pkls'
-        os.environ["CUDA_VISIBLE_DEVICES"] = '1,2'
-    elif hostname == 'Work-Station':
+        #os.environ["CUDA_VISIBLE_DEVICES"] = '1,2'
+    elif cfg.HOSTNAME == 'Work-Station':
         path = 'F:\\luozn\\data_FloorPlan'
         path_rplan = 'F:\\luozn\\data_RPLAN\\pkls'
-        os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
-    elif hostname == 'LAPTOP-LUOZN':
+        #os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
+    elif cfg.HOSTNAME == 'LAPTOP-LUOZN' or cfg.HOSTNAME == 'DESKTOP-57EV4E4':
         path = 'E:\Seafile\data_FloorPlan'
         path_rplan = 'E:\\Seafile\\data_RPLAN\\pkls'
+    cfg.path_rplan = path_rplan
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    date = datetime.now().strftime('%Y-%m-%d')
-    time_ = datetime.now().strftime('%H:%M:%S')
-    #dataset = 'floorplan'
-    print('using dataset:\t{}'.format(dataset_name))
-    print('hostname:\t{}'.format(hostname))
-    print('date:\t\t{}'.format(date))
+    cfg.DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    cfg.DATE = datetime.now().strftime('%Y-%m-%d')
+    cfg.TIME = datetime.now().strftime('%H:%M:%S')
+
+    return cfg
+
+
+def main(args):
+    cfg = setup(args)
+
+    device = cfg.DEVICE
+    date = cfg.DATE
+    time_ = cfg.TIME
+
+    print('using dataset:\t{}'.format(cfg.DARASET.NAME))
+    print('hostname:\t{}'.format(cfg.HOSTNAME))
+    print('date:\t\t{}'.format(cfg.DATE))
     # rooms=(0,1)
     #name_particular_rooms(path=path_rplan, rooms=rooms)
     # types_more_than_n(path=path_rplan,n=2000)
 
-    if dataset_name == 'floorplan':
-        real_dataset = wireframeDataset_Rplan(path=path)
-        pkl_name = './params/params_floorplan_{0}.pkl'.format(date)
-        batch_size = 16
-        log_dir = 'runs_floorplan'
-    elif dataset_name == 'rplan':
-        real_dataset = wireframeDataset_Rplan(
-            path=path_rplan, subset_name=subset_name)
-        pkl_name = './params/params_rplan_{0}.pkl'.format(date)
-        batch_size = 128
-        log_dir = 'runs_rplan'
+    real_dataset = wireframeDataset_Rplan(
+        path=cfg.path_rplan, subset_name=cfg.DATASET.SUBSET)
+    checkpoint = './params/params_rplan_{0}.pkl'.format(date)
+    log_dir = cfg.LOG_DIR
+    batch_size = cfg.DATASET.BATCHSIZE
+
     real_dataloader = DataLoader(
         real_dataset, batch_size, shuffle=True, num_workers=0, drop_last=True)
 
     # 固定的随机layout
     #fixed_z_file = './fixed_z/fixed_xyaw_{0}_1224.pkl'.format(dataset)
+    fixed_z_file = cfg.PATH.Z_FILE
     if not os.path.exists(fixed_z_file):
         fixed = generate_random_layout(real_dataset, 8)
         #fixed_images = [torch.tensor(x).to(device) for x in fixed]
@@ -91,10 +93,9 @@ def main(argv):
 
     # 初始化
     ######################################################
-    learning_rate = 0.00002
-    clamp_num = 0.01
-    num_epochs = 3000
-    tensorboard_interval = 100
+    learning_rate = cfg.TRAIN.LEARNING_RATE
+    num_epochs = cfg.TRAIN.NUM_EPOCHS
+    tensorboard_interval = cfg.TENSORBOARD.SAVE_INTERVAL
     tensorboard = True
     ######################################################
     discriminator_losses = []
@@ -103,12 +104,13 @@ def main(argv):
     gradient_penalties = []
 
     renderer = renderer_g2v(render_size=64, class_num=real_dataset.enc_len)
-    def render(x): return render_template(x, 64, real_dataset.enc_len)
+    def render(x): return renderer.render(x)
 
-    generator = Generator_branch(dataset=real_dataset)
+    generator = Generator(dataset=real_dataset)
     generator.apply(weight_init)
     generator = nn.DataParallel(generator)
     generator.to(device)
+
     discriminator = Discriminator_visual(
         dataset=real_dataset, renderer=renderer)
     discriminator.apply(weight_init)
@@ -120,8 +122,8 @@ def main(argv):
     discriminator_optimizer = optim.RMSprop(
         discriminator.parameters(), learning_rate)  # Wasserstein GAN推荐使用RMSProp优化
 
-    if os.path.exists(pkl_name):
-        checkpoint = torch.load(pkl_name)
+    if os.path.exists(checkpoint):
+        checkpoint = torch.load(checkpoint)
         generator.load_state_dict(checkpoint['generator_state_dict'])
         generator_optimizer.load_state_dict(
             checkpoint['generator_optimizer_state_dict'])
@@ -323,8 +325,8 @@ def main(argv):
             'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
             'epoch': epoch,
             'n_iter': n_iter,
-        }, pkl_name)
-        print('\tparams saved to ' + pkl_name)
+        }, checkpoint)
+        print('\tparams saved to ' + checkpoint)
 
     if tensorboard:
         writer.close()
