@@ -33,27 +33,15 @@ def setup(args):
     """
     cfg = get_cfg()
     cfg.merge_from_file("config.yaml")
-    #fixed_z_file = './fixed_z/fixed_xywh_{0}_{1}'.format(dataset_name, subset_name)
 
-    cfg.HOSTNAME = socket.gethostname()
-    if cfg.HOSTNAME == 'ubuntuStation':
-        path_rplan = '../../data_RPLAN/pkls'
-    elif cfg.HOSTNAME == 'DESKTOP-HRFSC59':
-        path = 'D:\\luozn\\data_FloorPlan'
-        path_rplan = 'D:\\luozn\\data_RPLAN\\pkls'
-        #os.environ["CUDA_VISIBLE_DEVICES"] = '1,2'
-    elif cfg.HOSTNAME == 'Work-Station':
-        path = 'F:\\luozn\\data_FloorPlan'
-        path_rplan = 'F:\\luozn\\data_RPLAN\\pkls'
-        #os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
-    elif cfg.HOSTNAME == 'LAPTOP-LUOZN' or cfg.HOSTNAME == 'DESKTOP-57EV4E4':
-        path = 'E:\Seafile\data_FloorPlan'
-        path_rplan = 'E:\\Seafile\\data_RPLAN\\pkls'
-    cfg.path_rplan = path_rplan
-
-    cfg.DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    cfg.DATE = datetime.now().strftime('%Y-%m-%d')
-    cfg.TIME = datetime.now().strftime('%H:%M:%S')
+    # manually add attributes
+    cfg.MANUAL.HOSTNAME = socket.gethostname()
+    cfg.MANUAL.RPLAN_PATH = cfg.PATH.RPLAN[
+        cfg.SYSTEM.HOSTNAMES.index(cfg.HOSTNAME)
+    ]
+    cfg.MANUAL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
+    cfg.MANUAL.DATE = datetime.now().strftime('%Y-%m-%d')
+    cfg.MANUAL.TIME = datetime.now().strftime('%H:%M:%S')
 
     return cfg
 
@@ -61,13 +49,13 @@ def setup(args):
 def main(args):
     cfg = setup(args)
 
-    device = cfg.DEVICE
+    device = torch.device(cfg.MANUAL.DEVICE)
     date = cfg.DATE
     time_ = cfg.TIME
 
     print('using dataset:\t{}'.format(cfg.DARASET.NAME))
-    print('hostname:\t{}'.format(cfg.HOSTNAME))
-    print('date:\t\t{}'.format(cfg.DATE))
+    print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
+    print('date:\t\t{}'.format(cfg.MANUAL.DATE))
     # rooms=(0,1)
     #name_particular_rooms(path=path_rplan, rooms=rooms)
     # types_more_than_n(path=path_rplan,n=2000)

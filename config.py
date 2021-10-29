@@ -5,10 +5,12 @@ _C = CN()
 _C.SYSTEM = CN()
 _C.SYSTEM.NUM_GPUS = 8
 _C.SYSTEM.NUM_WORKERS = 4
+_C.SYSTEM.HOSTNAMES = []
+
 
 _C.DATASET = CN()
 _C.DATASET.NAME = "rplan"
-_C.DATASET.SUBSET = "names_0-1_1-1_2-1_3-1_4-0_5-0_6-0_7-1_8-0_9-1.pkl"
+_C.DATASET.SUBSET = ""
 _C.DATASET.BATCHSIZE = 128
 
 _C.TRAIN = CN()
@@ -19,8 +21,11 @@ _C.TENSORBOARD = CN()
 _C.TENSORBOARD.SAVE_INTERVAL = 300
 
 _C.PATH = CN()
+_C.PATH.RPLAN = []
 _C.PATH.Z_FILE = "fixed_z/fixed_xyaw_rplan_0320.pkl"
-_C.LOG_DIR = "runs_rplan"
+_C.PATH.LOG_DIR = "runs_rplan"
+
+_C.MANUAL = CN()
 
 
 def get_cfg():
