@@ -49,7 +49,8 @@ def generate_random_layout(dataset, batch_size):
 
     # N,46,13
     v = np.concatenate([encoded, xc, yc, w, h], axis=2)
-    '''order_roomtype = np.argsort(rooms,axis=-1)
+    '''
+    order_roomtype = np.argsort(rooms,axis=-1)
 
     sorted_by_roomtype = (v*mask)[np.arange(batch_size)[:, np.newaxis],order_roomtype]
     order_zeros = np.argsort(-sorted_by_roomtype[:,:,:-4].sum(axis=-1),axis=-1)
@@ -64,7 +65,7 @@ class wireframeDataset_Rplan(Dataset):
     def __init__(self, cfg, img_size=256):
         self.path = cfg.PATH.RPLAN
         #self.maximum_elements_num = maximum_elements_num
-        self.dict_room_encode = {
+        self.dict_class_id = {
             'Living room': 0,
             'Master room': 1,
             'Kitchen': 2,
@@ -84,37 +85,42 @@ class wireframeDataset_Rplan(Dataset):
         else:
             self.names = os.listdir(self.path)
 
-        temp = []
-        for name in tqdm(self.names):  # 统计房间类型
+        self.data = dict()  # 数据加载到内存， 以字典保存
+        available_classid = tuple()
+        # 统计房间类型
+        for name in tqdm(self.names):
             with open(os.path.join(self.path, name), 'rb') as pkl_file:
-                floorplan = pickle.load(pkl_file)
-            for k, v in floorplan.items():
-                if len(v) > 0 and k not in temp:
-                    temp.append(k)
-        self.rooms = {v: k for k, v in self.dict_room_encode.items()
-                      if v in temp}
+                layout = pickle.load(pkl_file)
+            self.data[name] = layout
+            for classid, v in layout.items():
+                if len(v) > 0:
+                    available_classid.add(classid)
+        self.dict_id_class = {classid: classname for classname, classid in self.dict_class_id.items()
+                              if classid in available_classid}
         #self.rooms_reindex = {i:v for i,v in enumerate(self.rooms.values())}
-        self.index_mapping = {v: i for i, v in enumerate(self.rooms.keys())}
+        self.index_mapping = {classid: id_mapped for id_mapped,
+                              classid in enumerate(self.rooms.keys())}
 
         #self.enc = OneHotEncoder()
         # self.enc.fit(np.array(range(len(self.dict_room_encode))).reshape(-1,1))
         # self.enc.fit(np.array(list(self.dict_room_encode.values())).reshape(-1,1))
-        self.enc_len = len(self.rooms)
+        self.enc_len = len(self.index_mapping)
+        cfg.DATASET.ENCODING_LENGTH = self.enc_len
         self.img_size = img_size
 
         _ = self.get_statistics()
 
     def __getitem__(self, index):
         name = self.names[index]
-        with open(os.path.join(self.path, name), 'rb') as pkl_file:
-            layout = pickle.load(pkl_file)
-        layout = {key: layout[key] for key in self.rooms.keys()}
+        layout = self.data[name]
+        layout = {classid: layout[classid]
+                  for classid in self.dict_id_class.keys()}
         data = []
-        for room, _list in layout.items():
+        for classid, rects in layout.items():
             #ans =self.enc.transform(np.array([room]).reshape(-1,1)).toarray()
-            ans = F.one_hot(torch.tensor(
-                self.index_mapping[room]), num_classes=self.enc_len).numpy()
-            for r in _list:
+            onehot_enc = F.one_hot(torch.tensor(
+                self.index_mapping[classid]), num_classes=self.enc_len).numpy()
+            for r in rects:
                 (x0, y1), (x1, y0) = r
                 x0, y1, x1, y0 = x0/self.img_size, y1 / \
                     self.img_size, x1/self.img_size, y0/self.img_size
@@ -122,9 +128,8 @@ class wireframeDataset_Rplan(Dataset):
                 w = abs(x1-x0)
                 yc = (y0+y1)/2
                 h = abs(y1-y0)
-                #area_root = (w*h)**0.5
 
-                v = [ans, np.array([xc, yc, w, h])]
+                v = [onehot_enc, np.array([xc, yc, w, h])]
                 #v = [ans,np.array([x0,y0,x1,y1])]
                 v = np.concatenate(v)
                 data.append(v)
@@ -153,38 +158,43 @@ class wireframeDataset_Rplan(Dataset):
                     # 'X':self.X,
                     'maximum_elements_num': self.maximum_elements_num}
 
-        num_rects = {}  # 房间数量
+        dict_samplename_Nrects = {}  # 样本名: 房间数量
         rect_types = []  # 房间类型
-        coordinates = {name: []
-                       for name in self.rooms.keys()}  # 统计坐标(x1,y1,x2,y2)
-        elements_num = []  # 元素数量
-        for name in tqdm(self.names):
-            with open(os.path.join(self.path, name), 'rb') as pkl_file:
-                floorplan = pickle.load(pkl_file)
-            floorplan = {key: floorplan[key] for key in self.rooms}
+        coordinates = {classid: []
+                       for classid in self.dict_id_class.keys()}  # 统计坐标(x1,y1,x2,y2)
+        for name, layout in tqdm(self.data):
+            layout = {classid: layout[classid]
+                      for classid in self.dict_id_class}
             num_rect = 0
-            element_num = 0
             rect_type = []
-            for name_room, rects in floorplan.items():
+            for classid, rects in layout.items():
                 num_rect += len(rects)
-                element_num += len(rects)
                 for rect in rects:
-                    rect_type.append(name_room)
-                    coordinates[name_room].append(np.array(rect).reshape(-1))
+                    rect_type.append(classid)
+                    coordinates[classid].append(np.array(rect).reshape(-1))
             rect_types.append(rect_type)
-            num_rects[name] = num_rect
-            elements_num.append(element_num)
-        x = np.array(list(num_rects.values()))
+            dict_samplename_Nrects[name] = num_rect
+        x = np.array(list(dict_samplename_Nrects.values()))
         self.mu_num = np.mean(x)
         self.sigma_num = np.std(x)
 
-        coordinates = {k: np.array(v) for k, v in coordinates.items()}
-        self.mean = {k: v.mean(axis=0) for k, v in coordinates.items()}
-        self.cov = {k: np.cov(v.T) for k, v in coordinates.items()}
-        self.maximum_elements_num = max(elements_num)
+        coordinates = {classid: np.array(v)
+                       for classid, v in coordinates.items()}
+        self.mean = {classid: v.mean(axis=0)
+                     for classid, v in coordinates.items()}
+        self.cov = {classid: np.cov(v.T) for classid, v in coordinates.items()}
+        self.maximum_elements_num = max(list(dict_samplename_Nrects.values()))
 
-        self.rect_types = np.array([np.pad(np.array(r), (0, self.maximum_elements_num-len(
-            r)), 'constant', constant_values=(-1, -1)) for r in rect_types], dtype=np.int)
+        self.rect_types = np.array(
+            [np.pad(
+                np.array(r),
+                (0, self.maximum_elements_num-len(r)),
+                'constant',
+                constant_values=(-1, -1)
+            )
+                for r in rect_types],
+            dtype=np.int
+        )
         # 长宽比统计
         #ratio_as = np.array([(r[0][:,:-4].sum(axis=-1)>0.5) * (r[0][:,-2]/r[0][:,-1]) for r in self])
         #self.ratio_as = (np.percentile(np.array(ratio), 10,axis = 0), np.percentile(np.array(ratio), 90,axis = 0))
@@ -194,7 +204,6 @@ class wireframeDataset_Rplan(Dataset):
                 'mean_loc': self.mean,
                 'cov_loc': self.cov,
                 'rect_types': self.rect_types,
-                # 'X':self.X,
                 'maximum_elements_num': self.maximum_elements_num}
 
 
