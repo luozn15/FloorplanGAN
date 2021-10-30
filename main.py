@@ -37,7 +37,7 @@ def setup(args):
     # manually add attributes
     cfg.MANUAL.HOSTNAME = socket.gethostname()
     cfg.MANUAL.RPLAN_PATH = cfg.PATH.RPLAN[
-        cfg.SYSTEM.HOSTNAMES.index(cfg.HOSTNAME)
+        cfg.SYSTEM.HOSTNAMES.index(cfg.MANUAL.HOSTNAME)
     ]
     cfg.MANUAL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
     cfg.MANUAL.DATE = datetime.now().strftime('%Y-%m-%d')
@@ -53,7 +53,7 @@ def main(args):
     date = cfg.DATE
     time_ = cfg.TIME
 
-    print('using dataset:\t{}'.format(cfg.DARASET.NAME))
+    print('using dataset:\t{}'.format(cfg.DATASET.NAME))
     print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
     print('date:\t\t{}'.format(cfg.MANUAL.DATE))
     # rooms=(0,1)

@@ -62,7 +62,7 @@ def generate_random_layout(dataset, batch_size):
 class wireframeDataset_Rplan(Dataset):
     # rooms={0:1,1:1}
     def __init__(self, cfg, img_size=256):
-        self.path = cfg.PATH.RPLAN
+        self.path = cfg.MANUAL.RPLAN_PATH
         #self.maximum_elements_num = maximum_elements_num
         self.dict_room_encode = {
             'Living room': 0,
@@ -101,6 +101,7 @@ class wireframeDataset_Rplan(Dataset):
         # self.enc.fit(np.array(list(self.dict_room_encode.values())).reshape(-1,1))
         self.enc_len = len(self.rooms)
         self.img_size = img_size
+        cfg.DATASET.ENCODING_LENGTH = self.enc_len
 
         _ = self.get_statistics()
 
