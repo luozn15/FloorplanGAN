@@ -42,7 +42,8 @@ def setup(args):
     cfg.MANUAL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
     cfg.MANUAL.DATE = datetime.now().strftime('%Y-%m-%d')
     cfg.MANUAL.TIME = datetime.now().strftime('%H-%M-%S')
-
+    cfg.TENSORBOARD.ANNOTATION = os.popen(
+        "git log --pretty=oneline").read().split("\n")[0]
     return cfg
 
 
@@ -134,7 +135,7 @@ def main(args):
 
     # 训练
     writer = SummaryWriter(log_dir=log_dir+'/'+date+' '+time_)
-    #writer.add_text('annotation', annotation, 1)
+    writer.add_text('annotation', cfg.TENSORBOARD.ANNOTATION, 1)
 
     # 固定的随机噪声
     with open(fixed_z_file, 'rb') as pkl_file:
