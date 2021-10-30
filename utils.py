@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
+from matplotlib import pyplot as plt
+import torch
+import torch.nn.functional as F
 
 
 def name_particular_rooms(path, rooms):
@@ -56,7 +59,7 @@ def types_more_than_n(path, n=2000):
     with open(file, 'wb') as output:
         pickle.dump(names_, output)
     print('find {} types - {} layouts out of {} in total'.format(len(types),
-          len(names_), len(names)))
+                                                                 len(names_), len(names)))
     return
 
 

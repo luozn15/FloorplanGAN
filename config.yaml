@@ -9,15 +9,18 @@ SYSTEM:
     - LAPTOP-LUOZN
     - DESKTOP-57EV4E4
 DATASET:
-  ENCODING_LENGTH: 0
   NAME: "rplan"
   SUBSET: "names_0-1_1-1_2-1_3-1_4-0_5-0_6-0_7-1_8-0_9-1.pkl"
   BATCHSIZE: 128
+#MODEL:
+#  RENDERER:
+#    RENDERING_SIZE: 64
 TRAIN:
   LEARNING_RATE: 0.00002
   NUM_EPOCHS: 3000
 TENSORBOARD:
-  SAVE_INTERVAL: 100
+  SAVE_INTERVAL: 300
+  ANNOTATION: 
 PATH:
   RPLAN:
     - "../../data_RPLAN/pkls"
@@ -25,5 +28,5 @@ PATH:
     - "F:\\luozn\\data_RPLAN\\pkls"
     - "E:\\Seafile\\data_RPLAN\\pkls"
     - "E:\\Seafile\\data_RPLAN\\pkls"
-  Z_FILE: "fixed_z/fixed_xyaw_rplan_0320.pkl"
+  Z_FILE: "fixed_z/fixed_xywh_rplan_1030.pkl"
   LOG_DIR: "runs_rplan"

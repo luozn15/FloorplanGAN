@@ -17,7 +17,7 @@ from tqdm import tqdm
 from config import get_cfg
 from dataset import generate_random_layout, wireframeDataset_Rplan
 from models import Generator, WireframeDiscriminator, weight_init, renderer_g2v
-#from utils import bounds_check, get_figure, draw_table
+from utils import bounds_check, get_figure, draw_table
 
 import torch
 import torch.nn as nn
@@ -41,7 +41,7 @@ def setup(args):
     ]
     cfg.MANUAL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
     cfg.MANUAL.DATE = datetime.now().strftime('%Y-%m-%d')
-    cfg.MANUAL.TIME = datetime.now().strftime('%H:%M:%S')
+    cfg.MANUAL.TIME = datetime.now().strftime('%H-%M-%S')
 
     return cfg
 
@@ -50,8 +50,8 @@ def main(args):
     cfg = setup(args)
 
     device = torch.device(cfg.MANUAL.DEVICE)
-    date = cfg.DATE
-    time_ = cfg.TIME
+    date = cfg.MANUAL.DATE
+    time_ = cfg.MANUAL.TIME
 
     print('using dataset:\t{}'.format(cfg.DATASET.NAME))
     print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
@@ -60,14 +60,14 @@ def main(args):
     #name_particular_rooms(path=path_rplan, rooms=rooms)
     # types_more_than_n(path=path_rplan,n=2000)
 
-    real_dataset = wireframeDataset_Rplan(
-        path=cfg.path_rplan, subset_name=cfg.DATASET.SUBSET)
+    real_dataset = wireframeDataset_Rplan(cfg)
     checkpoint = './params/params_rplan_{0}.pkl'.format(date)
-    log_dir = cfg.LOG_DIR
+    log_dir = cfg.PATH.LOG_DIR
     batch_size = cfg.DATASET.BATCHSIZE
 
     real_dataloader = DataLoader(
-        real_dataset, batch_size, shuffle=True, num_workers=0, drop_last=True)
+        real_dataset, batch_size,
+        shuffle=True, num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True)
 
     # 固定的随机layout
     #fixed_z_file = './fixed_z/fixed_xyaw_{0}_1224.pkl'.format(dataset)
@@ -91,23 +91,23 @@ def main(args):
     boundray_losses = []
     gradient_penalties = []
 
-    renderer = renderer_g2v(render_size=64, class_num=real_dataset.enc_len)
-    def render(x): return renderer.render(x)
+    renderer = renderer_g2v(
+        render_size=cfg.MODEL.RENDERER.RENDERING_SIZE, class_num=real_dataset.enc_len)
 
     generator = Generator(dataset=real_dataset)
     generator.apply(weight_init)
     generator = nn.DataParallel(generator)
     generator.to(device)
 
-    discriminator = Discriminator_visual(
+    discriminator = WireframeDiscriminator(
         dataset=real_dataset, renderer=renderer)
     discriminator.apply(weight_init)
     discriminator = nn.DataParallel(discriminator)
     discriminator.to(device)
 
     # Initialize optimizers.
-    generator_optimizer = optim.RMSprop(generator.parameters(), learning_rate)
-    discriminator_optimizer = optim.RMSprop(
+    generator_optimizer = optim.Adam(generator.parameters(), learning_rate)
+    discriminator_optimizer = optim.Adam(
         discriminator.parameters(), learning_rate)  # Wasserstein GAN推荐使用RMSProp优化
 
     if os.path.exists(checkpoint):
@@ -134,14 +134,13 @@ def main(args):
 
     # 训练
     writer = SummaryWriter(log_dir=log_dir+'/'+date+' '+time_)
-    writer.add_text('annotation', annotation, 1)
+    #writer.add_text('annotation', annotation, 1)
 
     # 固定的随机噪声
     with open(fixed_z_file, 'rb') as pkl_file:
         fixed_z = pickle.load(pkl_file)
     fixed_z = [torch.tensor(x).to(device) for x in fixed_z]
-    discriminator.eval()
-    fig_fixed = get_figure(render(fixed_z[0].detach()))
+    fig_fixed = get_figure(renderer.render(fixed_z[0].detach()))
     writer.add_figure('fixed Z Image', fig_fixed, 1)
 
     # Start training.
@@ -155,27 +154,25 @@ def main(args):
             print('\t iter {0} | batch {1} of epoch {2}'.format(
                 n_iter, batch_i, epoch))
 
-            discriminator.train()
-            generator.train()
-
-            '''real_images = [torch.cat([F.relu(torch.normal(mean=real_images[0][:,:,:-4],std=0.02)),\
-                                      real_images[0][:,:,-4:]],axis=-1),\
-                           real_images[1]]#向真实数据加噪声'''
             real_images = [x.to(device) for x in real_images]
 
             random_images = generate_random_layout(real_dataset, batch_size)
             random_images = [torch.tensor(x).to(device) for x in random_images]
 
             # 训练判别器
+            generator.eval()
+            discriminator.train()
             discriminator.zero_grad()
             pred_real = discriminator(real_images[0], real_images[1])
+            pred_real.backward(torch.ones_like(pred_real).to(device))
 
             fake_images = generator(random_images[0], random_images[1])
             pred_fake = discriminator(
                 fake_images[0].detach(), fake_images[1].detach())
+            pred_fake.backward(-torch.ones_like(pred_real).to(device))
 
             # Gradient Penalty
-            alpha = torch.rand(batch_size, 1, 1)
+            """alpha = torch.rand(batch_size, 1, 1)
             alpha = alpha.expand(real_images[0].size())
             alpha = alpha.to(device)
             interpolates = alpha * \
@@ -188,32 +185,27 @@ def main(args):
                                                 pred_interpolates.size()).to(device),
                                             create_graph=True, retain_graph=True, only_inputs=True)[0]
             gradient_penalty = ((gradients.norm(2, dim=1) - 1)
-                                ** 2).mean() * 10  # * LAMBDA
-
-            # D_loss
-            discriminator_loss = -pred_real.mean() + pred_fake.mean() + gradient_penalty
-
-            discriminator_loss.backward()
+                                ** 2).mean() * 10  # * LAMBDA"""
             discriminator_optimizer.step()
-
+            discriminator_loss = pred_fake.mean() - pred_real.mean()
             if tensorboard:
                 discriminator_losses.append(
-                    (pred_real.mean()-pred_fake.mean()).cpu().detach().numpy())
-                gradient_penalties.append(
-                    gradient_penalty.cpu().detach().numpy())
+                    discriminator_loss.cpu().detach().numpy())
 
-            if (batch_i+1) % 5 == 0:
+            if (batch_i+1) % 2 == 0:
                 # 训练生成器
+                generator.train()
+                discriminator.eval()
                 generator.zero_grad()
 
                 boundray_loss = bounds_check(fake_images[0])
                 boundray_loss.backward(retain_graph=True)
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
-                generator_loss = -pred_fake.mean()
 
-                generator_loss.backward()
+                pred_fake.backward(torch.ones_like(pred_real).to(device))
                 generator_optimizer.step()
+                generator_loss = pred_fake.mean()
 
                 if tensorboard:
                     generator_losses.append(
@@ -226,7 +218,7 @@ def main(args):
                 discriminator_losses = np.array(discriminator_losses)
                 generator_losses = np.array(generator_losses)
                 boundray_losses = np.array(boundray_losses)
-                gradient_penalties = np.array(gradient_penalties)
+                #gradient_penalties = np.array(gradient_penalties)
 
                 print('\t\t N_iter {:7d} | Epoch [{:5d}/{:5d}] | -discriminator_loss: {:6.4f} | generator_loss: {:6.4f}'.
                       format(n_iter, epoch, num_epochs, discriminator_losses.mean(), generator_losses.mean()))
@@ -262,8 +254,7 @@ def main(args):
                                       generator_losses.mean(), n_iter)
                     writer.add_scalar(
                         'Boundray Loss', boundray_losses.mean(), n_iter)
-                    writer.add_scalar('Gradient_penalties',
-                                      gradient_penalties.mean(), n_iter)
+                    #writer.add_scalar('Gradient_penalties', gradient_penalties.mean(), n_iter)
 
                     # 记录网络权重
                     for name, param in discriminator.named_parameters():
@@ -289,12 +280,12 @@ def main(args):
                     writer.add_figure('prediction', acc, n_iter)
 
                     # 可视化真实图像,添加到tensorboard
-                    fig_real = get_figure(render(real_images[0][:8]))
+                    fig_real = get_figure(renderer.render(real_images[0][:8]))
                     writer.add_figure('Real Image', fig_real, n_iter)
 
                     # 可视化Z生成图像
                     generated_z = generator(fixed_z[0], fixed_z[1])
-                    fig_fake = get_figure(render(generated_z[0]))
+                    fig_fake = get_figure(renderer.render(generated_z[0]))
                     writer.add_figure('Fake Image', fig_fake, n_iter)
 
                     table = draw_table(generated_z[0][4])
@@ -303,7 +294,7 @@ def main(args):
                 discriminator_losses = []
                 generator_losses = []
                 boundray_losses = []
-                gradient_penalties = []
+                #gradient_penalties = []
 
         # 在确认模型有效之前，暂不保存模型参数
         torch.save({

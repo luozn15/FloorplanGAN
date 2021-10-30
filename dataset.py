@@ -18,21 +18,11 @@ def generate_random_layout(dataset, batch_size):
     mask = rooms < 0
     mask_tile = np.tile(np.expand_dims(mask, 2), dataset.enc_len+4)
     rooms[rooms < 0] = 0
-    # 房间数量
-    #num_rects = np.around(np.random.normal(loc=dataset.mu_num,scale=dataset.sigma_num,size=(batch_size,)))
-    #num_rects = np.maximum(num_rects,1)
-    #num_rects = np.minimum(num_rects,dataset.maximum_elements_num)
-
-    #mask = (np.arange(dataset.maximum_elements_num) < num_rects.reshape(-1,1)).astype(np.uint8)
-
-    # N,46,9
-
-    # rooms=np.random.choice(dataset.rect_types,size=(batch_size,dataset.maximum_elements_num),replace=True)
-
-    #rooms = np.sort(rooms)
-    #encoded = dataset.enc.transform(rooms.reshape(-1,1)).toarray().reshape(batch_size,dataset.maximum_elements_num,-1)
-    encoded = F.one_hot(torch.tensor(np.vectorize(lambda x: dataset.index_mapping[x])(rooms)).to(torch.int64),
-                        num_classes=dataset.enc_len).numpy().astype(np.float32)
+    encoded = F.one_hot(torch.tensor(
+        np.vectorize(lambda x: dataset.index_mapping[x])(rooms)
+    ).to(torch.int64),
+        num_classes=dataset.enc_len
+    ).numpy().astype(np.float32)
     # N,46,4
     loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
         .reshape((rooms.shape[0], rooms.shape[1], 4))/dataset.img_size
@@ -86,7 +76,7 @@ class wireframeDataset_Rplan(Dataset):
             self.names = os.listdir(self.path)
 
         self.data = dict()  # 数据加载到内存， 以字典保存
-        available_classid = tuple()
+        available_classid = set()
         # 统计房间类型
         for name in tqdm(self.names):
             with open(os.path.join(self.path, name), 'rb') as pkl_file:
@@ -99,15 +89,13 @@ class wireframeDataset_Rplan(Dataset):
                               if classid in available_classid}
         #self.rooms_reindex = {i:v for i,v in enumerate(self.rooms.values())}
         self.index_mapping = {classid: id_mapped for id_mapped,
-                              classid in enumerate(self.rooms.keys())}
+                              classid in enumerate(self.dict_id_class.keys())}
 
         #self.enc = OneHotEncoder()
         # self.enc.fit(np.array(range(len(self.dict_room_encode))).reshape(-1,1))
         # self.enc.fit(np.array(list(self.dict_room_encode.values())).reshape(-1,1))
         self.enc_len = len(self.index_mapping)
-        cfg.DATASET.ENCODING_LENGTH = self.enc_len
         self.img_size = img_size
-        cfg.DATASET.ENCODING_LENGTH = self.enc_len
 
         _ = self.get_statistics()
 
@@ -163,7 +151,7 @@ class wireframeDataset_Rplan(Dataset):
         rect_types = []  # 房间类型
         coordinates = {classid: []
                        for classid in self.dict_id_class.keys()}  # 统计坐标(x1,y1,x2,y2)
-        for name, layout in tqdm(self.data):
+        for name, layout in tqdm(self.data.items()):
             layout = {classid: layout[classid]
                       for classid in self.dict_id_class}
             num_rect = 0
