@@ -141,48 +141,108 @@ class Generator(nn.Module):
 
 
 class WireframeDiscriminator(nn.Module):
-    def __init__(self, dataset, renderer):
+    def __init__(self, dataset, renderer, cfg=None):
         super(WireframeDiscriminator, self).__init__()
         self.class_num = dataset.enc_len
         self.element_num = dataset.maximum_elements_num
         self.render_size = renderer.render_size
         self.renderer = renderer
+        num_resblocks = 3 if cfg is None else cfg.MODEL.DISCRIMINATOR.NUM_RESBLOCKS
+        in_channels = self.class_num
+        out_channels = 64
 
-        self.cnn = nn.Sequential(
-            nn.Conv2d(self.class_num, 64, kernel_size=5, stride=2,
-                      padding=2, bias=False),  # padding=2,same
+        """self.cnn = nn.Sequential(
+            nn.Conv2d(self.class_num, 64, kernel_size=3, stride=2,
+                      padding=1, bias=False),  # padding=2,same
             nn.BatchNorm2d(64),
             nn.LeakyReLU(inplace=True),  # 32, rendered_size/2, rendered_size/2
 
-            nn.Conv2d(64, 128, kernel_size=5, stride=2, padding=2, bias=False),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(inplace=True),  # 64, rendered_size/4, rendered_size/4
 
-            nn.Conv2d(128, 256, kernel_size=5,
-                      stride=2, padding=2, bias=False),
+            nn.Conv2d(128, 256, kernel_size=3,
+                      stride=2, padding=1, bias=False),
             nn.BatchNorm2d(256),
             # 128, rendered_size/8, rendered_size/8
             nn.LeakyReLU(inplace=True),
-        )
-
+        )"""
+        self.cnn = nn.ModuleList()
+        for i in range(num_resblocks):
+            resblock = ResidualBlock(in_channels, out_channels)
+            self.cnn.append(resblock)
+            in_channels = out_channels
+            out_channels *= 2
         self.classifier = nn.Sequential(
-            nn.Conv2d(256, 1024, kernel_size=int(
-                self.render_size/8), stride=1, bias=False),
-            # nn.Linear(in_features=64*16*16,out_features=512,bias=False),
+            nn.Conv2d(
+                out_channels >> 1,
+                1024,
+                kernel_size=self.render_size >> num_resblocks,
+                stride=1,
+                bias=False),
             nn.BatchNorm2d(1024),
-            nn.LeakyReLU(inplace=True),
+            nn.ReLU(inplace=True),
             nn.Conv2d(1024, 1, kernel_size=1, stride=1, bias=True),
-            # nn.Linear(in_features=512,out_features=1),
-            # nn.Sigmoid() Wasserstein GAN去掉最后一层sigmoid
         )
 
     def forward(self, input_data, input_length):
         #input_data = input[0]
         batch_size = input_data.shape[0]
-        rendered = self.renderer.render(input_data)  # batch_size,9,64,64
-        conved = self.cnn(rendered)  # batch_size,64,16,16
+        rendered = self.renderer.render(input_data)
+        x = rendered
+        for m in self.cnn:
+            x = m(x)
         #reshaped = conved.reshape(batch_size,-1)
-        return self.classifier(conved).squeeze()
+        return self.classifier(x).squeeze()
+
+# Residual block
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=2,
+            padding=kernel_size >> 1,
+            bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(
+            out_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=kernel_size >> 1,
+            bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.conv_downsample = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=2,
+            padding=kernel_size >> 1,
+            bias=False
+        )
+        self.bn_downsample = nn.BatchNorm2d(out_channels)
+
+    def forward(self, x):
+        #residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        residual = self.conv_downsample(x)
+        residual = self.bn_downsample(residual)
+        out += residual
+        out = self.relu(out)
+        return out
 
 
 def weight_init(m):
