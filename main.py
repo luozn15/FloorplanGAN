@@ -47,34 +47,29 @@ def setup():
     return cfg
 
 
-def train(cuda_rank):
+def train():
     cfg = setup()
     date = cfg.MANUAL.DATE
     time_ = cfg.MANUAL.TIME
 
-    device = torch.device("cuda", cuda_rank)
-
-    print('using dataset:\t{}'.format(cfg.DATASET.NAME))
+    print('dataset:\t{}'.format(cfg.DATASET.NAME))
     print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
     print('date:\t\t{}'.format(cfg.MANUAL.DATE))
 
+    local_rank = int(os.environ['LOCAL_RANK'])
+    device = torch.device("cuda", local_rank)
     real_dataset = wireframeDataset_Rplan(cfg)
     checkpoint = './params/params_rplan_{0}.pkl'.format(date)
     log_dir = cfg.PATH.LOG_DIR
     batch_size = cfg.DATASET.BATCHSIZE
 
+    ddp_sampler = DistributedSampler(real_dataset)
     real_dataloader = DataLoader(
-        real_dataset, batch_size, shuffle=True,
+        real_dataset, batch_size, sampler=ddp_sampler,
         num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
 
     # 固定的随机layout
     fixed_z_file = cfg.PATH.Z_FILE
-    if not os.path.exists(fixed_z_file):
-        fixed = generate_random_layout(real_dataset, 8)
-        #fixed_images = [torch.tensor(x).to(device) for x in fixed]
-        with open(fixed_z_file, 'wb') as output:
-            pickle.dump(fixed, output)
-        print('generating'+fixed_z_file)
 
     # Loss function
     adversarial_loss = torch.nn.BCELoss()
@@ -107,33 +102,45 @@ def train(cuda_rank):
         # global step
         n_iter = -1
         print('create_new_model')
+    generator = DDP(generator, device_ids=[
+                    local_rank], output_device=local_rank, broadcast_buffers=False)
+    discriminator = DDP(discriminator, device_ids=[
+                        local_rank], output_device=local_rank, broadcast_buffers=False)
 
     # Initialize optimizers.
     generator_optimizer = optim.Adam(generator.parameters(), learning_rate)
     discriminator_optimizer = optim.Adam(
         discriminator.parameters(), learning_rate)
 
-    print('amount of parameters in generator:\t', sum(p.numel()
-                                                      for p in generator.parameters() if p.requires_grad))
-    print('amount of parameters in discriminator:\t', sum(p.numel()
-                                                          for p in discriminator.parameters() if p.requires_grad))
+    if dist.get_rank() == 0:
+        print('amount of parameters in generator:\t',
+              sum(p.numel() for p in generator.parameters() if p.requires_grad))
+        print('amount of parameters in discriminator:\t',
+              sum(p.numel() for p in discriminator.parameters() if p.requires_grad))
 
-    # 固定的随机噪声
-    with open(fixed_z_file, 'rb') as pkl_file:
-        fixed_z = pickle.load(pkl_file)
-    fixed_z = [torch.tensor(x).to(device) for x in fixed_z]
-    fig_fixed = get_figure(renderer.render(fixed_z[0].detach()))
+        # 固定的随机噪声
+        if not os.path.exists(fixed_z_file):
+            fixed = generate_random_layout(real_dataset, 8)
+            #fixed_images = [torch.tensor(x).to(device) for x in fixed]
+            with open(fixed_z_file, 'wb') as output:
+                pickle.dump(fixed, output)
+            print('generating'+fixed_z_file)
+        with open(fixed_z_file, 'rb') as pkl_file:
+            fixed_z = pickle.load(pkl_file)
+        fixed_z = [torch.tensor(x).to(device) for x in fixed_z]
+        fig_fixed = get_figure(renderer.render(fixed_z[0].detach()))
 
-    # 训练
-    os.makedirs(log_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=log_dir+'/'+date+' '+time_)
-    writer.add_text('annotation', cfg.TENSORBOARD.ANNOTATION, 1)
-    writer.add_figure('fixed Z Image', fig_fixed, 1)
+        # 训练
+        os.makedirs(log_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=log_dir+'/'+date+' '+time_)
+        writer.add_text('annotation', cfg.TENSORBOARD.ANNOTATION, 1)
+        writer.add_figure('fixed Z Image', fig_fixed, 1)
 
     # Start training.
     for ec in range(num_epochs):
         epoch = ec + epoch_last
         print('Start to train epoch %d.' % (epoch))
+        real_dataloader.sampler.set_epoch(epoch)
 
         discriminator_losses = []
         generator_losses = []
@@ -159,15 +166,15 @@ def train(cuda_rank):
             pred_real = discriminator(real_images[0], real_images[1])
             d_real_loss = adversarial_loss(
                 pred_real, torch.ones_like(pred_real))
-
             fake_images = generator(random_images[0], random_images[1])
             pred_fake = discriminator(
                 fake_images[0].detach(), fake_images[1].detach())
             d_fake_loss = adversarial_loss(
                 pred_fake, torch.zeros_like(pred_fake))
 
-            d_loss = (d_real_loss + d_fake_loss) / 2
+            d_loss = (d_real_loss + d_fake_loss)/2.
             d_loss.backward()
+
             discriminator_optimizer.step()
             discriminator_losses.append(
                 d_loss.cpu().detach().numpy())
@@ -199,24 +206,25 @@ def train(cuda_rank):
         if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS-1:
             continue
         # TensorboardX
-        tensorboard_write(
-            writer,
-            n_iter, epoch, num_epochs,
-            discriminator_losses, generator_losses, boundray_losses,
-            generator, discriminator, renderer,
-            pred_real, pred_fake, real_images, random_images, fixed_z
-        )
+        if dist.get_rank() == 0:
+            tensorboard_write(
+                writer,
+                n_iter, epoch, num_epochs,
+                discriminator_losses, generator_losses, boundray_losses,
+                generator, discriminator, renderer,
+                pred_real, pred_fake, real_images, random_images, fixed_z
+            )
 
-        # 保存模型参数
-        torch.save({
-            'generator_state_dict': generator.state_dict(),
-            'generator_optimizer_state_dict': generator_optimizer.state_dict(),
-            'discriminator_state_dict': discriminator.state_dict(),
-            'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
-            'epoch': epoch,
-            'n_iter': n_iter,
-        }, checkpoint)
-        print('\tparams saved to ' + checkpoint)
+            # 保存模型参数
+            torch.save({
+                'generator_state_dict': generator.state_dict(),
+                'generator_optimizer_state_dict': generator_optimizer.state_dict(),
+                'discriminator_state_dict': discriminator.state_dict(),
+                'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
+                'epoch': epoch,
+                'n_iter': n_iter,
+            }, checkpoint)
+            print('\tparams saved to ' + checkpoint)
 
     writer.close()
 
@@ -303,5 +311,9 @@ def tensorboard_write(
 
 
 if __name__ == '__main__':
-    cuda_rank = 0
-    train(cuda_rank)
+    # torchrun --nnodes=1 --nproc_per_node=2 main.py
+    import os
+    local_rank = int(os.environ["LOCAL_RANK"])
+    with torch.cuda.device(local_rank):
+        torch.distributed.init_process_group(backend='nccl')
+        train()

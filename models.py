@@ -70,7 +70,8 @@ class Generator(nn.Module):
         clss = input_data[:, :, :-4].unsqueeze(-1)  # (B,S,10,1)
         geo = input_data[:, :, -4:].unsqueeze(-2)  # (B,S,1,4)
 
-        modified = torch.matmul(clss, geo).permute(0, 3, 1, 2)  # (B,4,S,10)
+        modified = torch.matmul(clss, geo).permute(
+            0, 3, 1, 2).contiguous()  # (B,4,S,10)
 
         # Encoder
         h0_0 = self.encoder_batch_norm0(
@@ -100,7 +101,8 @@ class Generator(nn.Module):
             src=encoded, src_key_padding_mask=input_length)  # (S,B,dim*4*10)
         transformed = transformed.reshape(
             transformed.shape[0], transformed.shape[1], -1, self.class_num)  # (S,B,dim*4,10)
-        transformed = transformed.permute(1, 2, 0, 3)  # (B,dim*4,S,10)
+        transformed = transformed.permute(
+            1, 2, 0, 3).contiguous()  # (B,dim*4,S,10)
         #self.relation = F.relu(self.relation_bn1(self.relation+self.relation_nonLocal1(self.relation)))
 
         # Decoder
@@ -128,7 +130,7 @@ class Generator(nn.Module):
 
         # Synthesized layout
         res = torch.cat((syn_cls, syn_geo), 1).squeeze().permute(
-            0, 2, 1)  # (B,S,14)
+            0, 2, 1).contiguous()  # (B,S,14)
 
         # Remove redundancy
         '''mask_l = [torch.cat([torch.ones(l,feature_size),torch.zeros(maximum_elements_num-l,feature_size)]) for l in input_length.cpu().numpy()]
@@ -151,24 +153,8 @@ class WireframeDiscriminator(nn.Module):
         in_channels = self.class_num
         out_channels = 64
 
-        """self.cnn = nn.Sequential(
-            nn.Conv2d(self.class_num, 64, kernel_size=3, stride=2,
-                      padding=1, bias=False),  # padding=2,same
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(inplace=True),  # 32, rendered_size/2, rendered_size/2
-
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(inplace=True),  # 64, rendered_size/4, rendered_size/4
-
-            nn.Conv2d(128, 256, kernel_size=3,
-                      stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            # 128, rendered_size/8, rendered_size/8
-            nn.LeakyReLU(inplace=True),
-        )"""
         self.cnn = nn.ModuleList()
-        for i in range(num_resblocks):
+        for _ in range(num_resblocks):
             resblock = ResidualBlock(in_channels, out_channels)
             self.cnn.append(resblock)
             in_channels = out_channels
@@ -181,7 +167,7 @@ class WireframeDiscriminator(nn.Module):
                 stride=1,
                 bias=False),
             nn.BatchNorm2d(1024),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Conv2d(1024, 1, kernel_size=1, stride=1, bias=True),
             nn.Sigmoid()
         )
@@ -194,7 +180,8 @@ class WireframeDiscriminator(nn.Module):
         for m in self.cnn:
             x = m(x)
         #reshaped = conved.reshape(batch_size,-1)
-        return self.classifier(x).squeeze()
+        output = self.classifier(x)
+        return output.squeeze()
 
 # Residual block
 
@@ -211,7 +198,7 @@ class ResidualBlock(nn.Module):
             bias=False
         )
         self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
         self.conv2 = nn.Conv2d(
             out_channels,
             out_channels,
@@ -241,7 +228,7 @@ class ResidualBlock(nn.Module):
         out = self.bn2(out)
         residual = self.conv_downsample(x)
         residual = self.bn_downsample(residual)
-        out += residual  # inplace add
+        out = out + residual  # inplace add
         out = self.relu(out)
         return out
 
@@ -276,7 +263,7 @@ class renderer_g2v():
 
         coor_x = torch.arange(self.render_size).unsqueeze(1).expand(self.render_size, self.render_size).T\
             .expand(batch_size, num_elements, self.render_size, self.render_size).to(device)
-        coor_y = coor_x.transpose(2, 3).to(device)
+        coor_y = coor_x.transpose(2, 3).contiguous().to(device)
 
         x = rects[:, :, 0].reshape(
             batch_size, -1, 1, 1)*self.render_size  # batch_size,46,1,1
@@ -337,5 +324,5 @@ class renderer_g2v():
                     ,dim=1).permute(0,3,1,2)'''
         F_ = torch.max(
             class_.reshape(batch_size, num_elements, 1, 1, self.class_num)
-            .mul(rendered.reshape(batch_size, num_elements, self.render_size, self.render_size, 1)), dim=1)[0].permute(0, 3, 1, 2)
+            .mul(rendered.reshape(batch_size, num_elements, self.render_size, self.render_size, 1)), dim=1)[0].permute(0, 3, 1, 2).contiguous()
         return F_
