@@ -1,7 +1,7 @@
 # FloorplanGAN  
  ![banner](assets/process_p_crop.png)
 #### Introduction  
-**FloorplanGAN** is a study aiming at synthesis vectorized residential floorplans based on *Differentiable Rendering*, *Adversiral Generation* and *Self-Attention*.
+**FloorplanGAN** is a study aiming at synthesising vectorized residential floorplans based on *Differentiable Rendering*, *Adversiral Generation* and *Self-Attention*.
 #### Dataset  
 We leverage the open source dataset *RPlan* ([http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html](http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html)), which contains 80k+ well annotated real residential floorplans in PNG format. The training set, test set and validation set are divided 8:1:1.  
 [Pyportace](https://pypi.org/project/pypotrace/) is used to vectorize these bitmap, and the preprocessed data can be download [here](https://cloud.tsinghua.edu.cn/df9310261ee5846998730/).

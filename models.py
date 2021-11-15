@@ -183,6 +183,7 @@ class WireframeDiscriminator(nn.Module):
             nn.BatchNorm2d(1024),
             nn.ReLU(inplace=True),
             nn.Conv2d(1024, 1, kernel_size=1, stride=1, bias=True),
+            nn.Sigmoid()
         )
 
     def forward(self, input_data, input_length):
@@ -240,7 +241,7 @@ class ResidualBlock(nn.Module):
         out = self.bn2(out)
         residual = self.conv_downsample(x)
         residual = self.bn_downsample(residual)
-        out += residual
+        out += residual  # inplace add
         out = self.relu(out)
         return out
 

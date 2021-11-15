@@ -83,6 +83,8 @@ def main(FLAGS):
             pickle.dump(fixed, output)
         print('generating'+fixed_z_file)
 
+    # Loss function
+    adversarial_loss = torch.nn.BCELoss()
     # 初始化
     ######################################################
     learning_rate = cfg.TRAIN.LEARNING_RATE
@@ -164,36 +166,44 @@ def main(FLAGS):
             generator.eval()
             discriminator.train()
             discriminator.zero_grad()
+            discriminator_optimizer.zero_grad()
+
             pred_real = discriminator(real_images[0], real_images[1])
-            pred_real.backward(torch.ones_like(pred_real).to(device))
+            d_real_loss = adversarial_loss(
+                pred_real, torch.ones_like(pred_real))
 
             fake_images = generator(random_images[0], random_images[1])
             pred_fake = discriminator(
                 fake_images[0].detach(), fake_images[1].detach())
-            pred_fake.backward(-torch.ones_like(pred_real).to(device))
+            d_fake_loss = adversarial_loss(
+                pred_fake, torch.zeros_like(pred_fake))
 
+            d_loss = (d_real_loss + d_fake_loss) / 2
+            d_loss.backward()
             discriminator_optimizer.step()
-            discriminator_loss = pred_fake.mean() - pred_real.mean()
             discriminator_losses.append(
-                discriminator_loss.cpu().detach().numpy())
+                d_loss.cpu().detach().numpy())
 
             if (batch_i+1) % 2 == 0:
                 # 训练生成器
                 generator.train()
                 discriminator.eval()
                 generator.zero_grad()
+                generator_optimizer.zero_grad()
 
                 boundray_loss = bounds_check(fake_images[0])
                 boundray_loss.backward(retain_graph=True)
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
+                g_loss = adversarial_loss(
+                    pred_fake, torch.ones_like(pred_fake))
 
-                pred_fake.backward(torch.ones_like(pred_real).to(device))
+                sum_loss = g_loss+boundray_loss
+                sum_loss.backward()
                 generator_optimizer.step()
-                generator_loss = pred_fake.mean()
 
                 generator_losses.append(
-                    generator_loss.cpu().detach().numpy())
+                    g_loss.cpu().detach().numpy())
                 boundray_losses.append(
                     boundray_loss.cpu().detach().numpy())
 
@@ -205,7 +215,6 @@ def main(FLAGS):
             discriminator_losses = np.array(discriminator_losses)
             generator_losses = np.array(generator_losses)
             boundray_losses = np.array(boundray_losses)
-            #gradient_penalties = np.array(gradient_penalties)
 
             print('N_iter {:7d} | Epoch [{:5d}/{:5d}] | discriminator_loss: {:6.4f} | generator_loss: {:6.4f}'.
                   format(n_iter, epoch, num_epochs, discriminator_losses.mean(), generator_losses.mean()))
