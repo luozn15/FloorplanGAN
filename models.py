@@ -146,8 +146,8 @@ class WireframeDiscriminator(nn.Module):
                 kernel_size=self.render_size >> num_resblocks,
                 stride=1,
                 bias=False),
-            nn.SyncBatchNorm(1024),
-            nn.ReLU(),
+            nn.BatchNorm2d(1024),
+            nn.LeakyReLU(),
             nn.Conv2d(1024, 1, kernel_size=1, stride=1, bias=True),
             nn.Sigmoid()
         )
@@ -177,8 +177,8 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn1 = nn.SyncBatchNorm(out_channels)
-        self.relu = nn.ReLU()
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.lrelu = nn.LeakyReLU()
         self.conv2 = nn.Conv2d(
             out_channels,
             out_channels,
@@ -187,7 +187,7 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn2 = nn.SyncBatchNorm(out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
 
         self.conv_downsample = nn.Conv2d(
             in_channels,
@@ -197,19 +197,19 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn_downsample = nn.SyncBatchNorm(out_channels)
+        self.bn_downsample = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
         #residual = x
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.lrelu(out)
         out = self.conv2(out)
         out = self.bn2(out)
         residual = self.conv_downsample(x)
         residual = self.bn_downsample(residual)
         out = out + residual  # inplace add
-        out = self.relu(out)
+        out = self.lrelu(out)
         return out
 
 

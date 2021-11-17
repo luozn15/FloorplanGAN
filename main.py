@@ -8,7 +8,7 @@ import socket
 import pickle
 import numpy as np
 from matplotlib import pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import get_cfg
 from dataset import generate_random_layout, wireframeDataset_Rplan
@@ -105,14 +105,18 @@ def train():
         n_iter = -1
         print('create_new_model')
     generator = DDP(generator, device_ids=[
-                    local_rank], output_device=local_rank)
+                    local_rank], output_device=local_rank, broadcast_buffers=False)
     discriminator = DDP(discriminator, device_ids=[
-                        local_rank], output_device=local_rank)
+                        local_rank], output_device=local_rank, broadcast_buffers=False)
 
     # Initialize optimizers.
     generator_optimizer = optim.Adam(generator.parameters(), learning_rate)
+    generator_scheduler = optim.lr_scheduler.ExponentialLR(
+        generator_optimizer, 0.9)
     discriminator_optimizer = optim.Adam(
         discriminator.parameters(), learning_rate)
+    discriminator_scheduler = optim.lr_scheduler.ExponentialLR(
+        discriminator_optimizer, 0.9)
 
     if dist.get_rank() == 0:
         print('amount of parameters in generator:\t',
@@ -158,41 +162,43 @@ def train():
             random_images = generate_random_layout(real_dataset, batch_size)
             random_images = [torch.tensor(x).to(device) for x in random_images]
 
-            # 训练判别器
-            generator.eval()
-            discriminator.train()
-            discriminator_optimizer.zero_grad()
-
-            pred_real = discriminator(real_images[0], real_images[1])
-            d_real_loss = adversarial_loss(
-                pred_real, torch.ones_like(pred_real)*0.9)
-            w_real = 1./(pred_real.mean().item()+EPSILON)
-
-            fake_images = generator(random_images[0], random_images[1])
-            pred_fake = discriminator(
-                fake_images[0].detach(), fake_images[1].detach())
-            d_fake_loss = adversarial_loss(
-                pred_fake, torch.zeros_like(pred_fake))
-            w_fake = 1./(1.-pred_fake.mean().item()+EPSILON)
-
-            d_loss = (w_real * d_real_loss + w_fake *
-                      d_fake_loss)/(w_real+w_fake)
-            #d_loss = d_fake_loss
-            d_loss.backward()
-
-            discriminator_optimizer.step()
-            discriminator_losses_real.append(
-                d_real_loss.cpu().detach().numpy())
-            discriminator_losses_fake.append(
-                d_fake_loss.cpu().detach().numpy())
-            discriminator_losses.append(d_loss.cpu().detach().numpy())
-
             if (batch_i+1) % 2 == 0:
+                # 训练判别器
+                generator.eval()
+                discriminator.train()
+                discriminator_optimizer.zero_grad()
+
+                pred_real = discriminator(real_images[0], real_images[1])
+                d_real_loss = adversarial_loss(
+                    pred_real, torch.ones_like(pred_real)*0.9)
+                w_real = 1./(pred_real.mean().item()+EPSILON)
+
+                fake_images = generator(random_images[0], random_images[1])
+                pred_fake = discriminator(
+                    fake_images[0].detach(), fake_images[1].detach())
+                d_fake_loss = adversarial_loss(
+                    pred_fake, torch.zeros_like(pred_fake))
+                w_fake = 1./(1.-pred_fake.mean().item()+EPSILON)
+
+                d_loss = (w_real * d_real_loss + w_fake *
+                          d_fake_loss)/(w_real+w_fake)
+                #d_loss = d_fake_loss
+                d_loss.backward()
+
+                discriminator_optimizer.step()
+                discriminator_losses_real.append(
+                    d_real_loss.cpu().detach().numpy())
+                discriminator_losses_fake.append(
+                    d_fake_loss.cpu().detach().numpy())
+                discriminator_losses.append(d_loss.cpu().detach().numpy())
+
+            if (batch_i+1) % 1 == 0:
                 # 训练生成器
                 generator.train()
                 discriminator.eval()
                 generator_optimizer.zero_grad()
 
+                fake_images = generator(random_images[0], random_images[1])
                 boundray_loss = bounds_check(fake_images[0])
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
@@ -209,9 +215,13 @@ def train():
                     boundray_loss.cpu().detach().numpy())
 
             if n_iter % 10 == 9:
-                print('\t iter {0} | batch {1} of epoch {2}'.format(
-                    n_iter, batch_i, epoch))
+                print('\t local_rank {} | iter {} | batch {} of epoch {} | D_loss {} | G_loss {} | Boundray_loss {}'
+                      .format(dist.get_rank(), n_iter, batch_i, epoch, d_loss, g_loss, boundray_loss))
 
+        if epoch % cfg.MODEL.GENERATOR.DECAY_EPOCHS == cfg.MODEL.GENERATOR.DECAY_EPOCHS - 1:
+            generator_scheduler.step()
+        if epoch % cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS == cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS - 1:
+            discriminator_scheduler.step()
         # skip saving interval
         if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != 0:
             continue
