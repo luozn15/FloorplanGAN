@@ -105,9 +105,9 @@ def train():
         n_iter = -1
         print('create_new_model')
     generator = DDP(generator, device_ids=[
-                    local_rank], output_device=local_rank, broadcast_buffers=False)
+                    local_rank], output_device=local_rank)
     discriminator = DDP(discriminator, device_ids=[
-                        local_rank], output_device=local_rank, broadcast_buffers=False)
+                        local_rank], output_device=local_rank)
 
     # Initialize optimizers.
     generator_optimizer = optim.Adam(generator.parameters(), learning_rate)

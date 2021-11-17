@@ -12,57 +12,51 @@ class Generator(nn.Module):
     def __init__(self, dataset):  # feature_size, class_num, element_num):
         super(Generator, self).__init__()
 
-        self.class_num = dataset.enc_len  # 10
-        self.element_num = dataset.maximum_elements_num  # 8
-        dim = 128
+        self.class_num = dataset.enc_len  # 6
+        self.element_num = dataset.maximum_elements_num  # 6
+        dim = 64
         # Encoder: two fully connected layers, input layout Z.
         self.encoder_fc0 = nn.Conv2d(
             4, dim*4, kernel_size=1, stride=1, bias=False)  # 4 是 (xc,w,yc,h) 的位数
-        self.encoder_batch_norm0 = nn.BatchNorm2d(dim*4)
+        self.encoder_instance_norm0 = nn.InstanceNorm2d(dim*4)
         self.encoder_fc1 = nn.Conv2d(
             4, dim, kernel_size=1, stride=1, bias=False)
-        self.encoder_batch_norm1 = nn.BatchNorm2d(dim)
+        self.encoder_instance_norm1 = nn.InstanceNorm2d(dim)
         self.encoder_fc2 = nn.Conv2d(
             dim, dim, kernel_size=1, stride=1, bias=False)
-        self.encoder_batch_norm2 = nn.BatchNorm2d(dim)
+        self.encoder_instance_norm2 = nn.InstanceNorm2d(dim)
         self.encoder_fc3 = nn.Conv2d(
             dim, dim*4, kernel_size=1, stride=1, bias=False)
-        self.encoder_batch_norm3 = nn.BatchNorm2d(dim*4)
+        self.encoder_instance_norm3 = nn.InstanceNorm2d(dim*4)
+
         # Batchsize=16, Chanel=dim*4 ,S=8, O=10
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim*4*self.class_num, nhead=8)
+            d_model=dim*4*self.class_num, nhead=8, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, num_layers=3)
-        '''self.transformer = nn.Transformer(d_model=2560,
-                                            nhead=10,
-                                            num_encoder_layers=3,
-                                            num_decoder_layers =3)'''
 
         # Decoder, two fully connected layers.
         self.decoder_fc0 = nn.Conv2d(
-            dim*4, dim*4, kernel_size=1, stride=1, bias=False)
-        self.decoder_batch_norm0 = nn.BatchNorm2d(dim*4)
+            dim*4*self.class_num, dim*4, kernel_size=1, stride=1, bias=False)
+        self.decoder_instance_norm0 = nn.InstanceNorm2d(dim*4)
         self.decoder_fc1 = nn.Conv2d(
-            dim*4, dim, kernel_size=1, stride=1, bias=False)
-        self.decoder_batch_norm1 = nn.BatchNorm2d(dim)
+            dim*4*self.class_num, dim, kernel_size=1, stride=1, bias=False)
+        self.decoder_instance_norm1 = nn.InstanceNorm2d(dim)
         self.decoder_fc2 = nn.Conv2d(
             dim, dim, kernel_size=1, stride=1, bias=False)
-        self.decoder_batch_norm2 = nn.BatchNorm2d(dim)
+        self.decoder_instance_norm2 = nn.InstanceNorm2d(dim)
         self.decoder_fc3 = nn.Conv2d(
             dim, dim*4, kernel_size=1, stride=1, bias=False)
-        self.decoder_batch_norm3 = nn.BatchNorm2d(dim*4)
-
-        self.decoder_fc4 = nn.Conv2d(
-            dim*4, 4, kernel_size=1, stride=1, bias=False)
-        self.decoder_batch_norm4 = nn.BatchNorm2d(4)
+        self.decoder_instance_norm3 = nn.InstanceNorm2d(dim*4)
 
         # Branch of class
         # self.branch_fc0 = nn.Conv2d(1024, self.class_num,kernel_size=1,stride=1) #(16,10,8,1)
         #self.sigmoid_brach0 = nn.Sigmoid()
         #self.softmax = nn.Softmax(dim=1)
         # Branch of position
-        # self.branch_fc1 = nn.Conv2d(dim*4, 4 ,kernel_size=1,stride=1) #(16,4,8,1)
-        self.branch_fc1 = nn.Linear(self.class_num, 1)  # (16,4,8,1)
+        self.branch_fc1 = nn.Conv2d(
+            dim*4, 4, kernel_size=1, stride=1)  # (16,4,8,1)
+        # self.branch_fc1 = nn.Linear(self.class_num, 1)  # (16,4,8,1)
         self.sigmoid_brach1 = nn.Sigmoid()
 
     def forward(self, input_data, input_length):  # (B,S,14),(B,S)
@@ -74,70 +68,56 @@ class Generator(nn.Module):
             0, 3, 1, 2).contiguous()  # (B,4,S,10)
 
         # Encoder
-        h0_0 = self.encoder_batch_norm0(
+        h0_0 = self.encoder_instance_norm0(
             self.encoder_fc0(modified))  # (B,dim*4,S,10)
-        h0_1 = F.relu(self.encoder_batch_norm1(
+        h0_1 = F.relu(self.encoder_instance_norm1(
             self.encoder_fc1(modified)))  # (B,dim,S,10)
-        h0_2 = F.relu(self.encoder_batch_norm2(
+        h0_2 = F.relu(self.encoder_instance_norm2(
             self.encoder_fc2(h0_1)))  # (B,dim,S,10)
-        h0_3 = self.encoder_batch_norm3(
+        h0_3 = self.encoder_instance_norm3(
             self.encoder_fc3(h0_2))  # (B,dim*4,S,10)
-        #out = F.relu(self.encoder_fc1(normed_data))
-        #out = F.relu(self.encoder_fc2(out))
         encoded = F.relu(h0_0+h0_3)  # (B,dim*4,S,10)
-        encoded = encoded.permute(2, 0, 1, 3)  # (S,B,dim*4,10)
+        encoded = encoded.permute(0, 2, 1, 3).contiguous()  # (B,S,dim*4,10)
         encoded = encoded.reshape(
-            self.element_num, batch_size, -1)  # (S,B,dim*4*10)
+            batch_size, self.element_num, -1)  # (B,S,dim*4*10)
 
-        # Stacked relation module
-        '''relation0 = F.relu(self.relation_bn0(self.relation_nonLocal0(encoded)))
-        relation1 = F.relu(self.relation_bn1(self.relation_nonLocal1(relation0)))
-        residual_block1 = encoded + relation1
-        relation2 = F.relu(self.relation_bn2(self.relation_nonLocal2(residual_block1)))
-        relation3 = F.relu(self.relation_bn3(self.relation_nonLocal3(relation2)))
-        residual_block2 = residual_block1 + relation3'''
-
+        # Self relation
         transformed = self.transformer_encoder(
-            src=encoded, src_key_padding_mask=input_length)  # (S,B,dim*4*10)
-        transformed = transformed.reshape(
-            transformed.shape[0], transformed.shape[1], -1, self.class_num)  # (S,B,dim*4,10)
-        transformed = transformed.permute(
-            1, 2, 0, 3).contiguous()  # (B,dim*4,S,10)
-        #self.relation = F.relu(self.relation_bn1(self.relation+self.relation_nonLocal1(self.relation)))
+            src=encoded, src_key_padding_mask=input_length)  # (B,S,dim*4*10)
+        transformed = transformed.permute(0, 2, 1).contiguous(
+        ).unsqueeze(-1)  # (B,dim*4*10,S,1)
 
         # Decoder
-        h1_0 = self.decoder_batch_norm0(
-            self.decoder_fc0(transformed))  # (B,dim*4,S,10)
-        h1_1 = F.relu(self.decoder_batch_norm1(
-            self.decoder_fc1(transformed)))  # (B,dim,S,10)
-        h1_2 = F.relu(self.decoder_batch_norm2(
-            self.decoder_fc2(h1_1)))  # (B,dim,S,10)
-        h1_3 = self.decoder_batch_norm3(
-            self.decoder_fc3(h1_2))  # (B,dim*4,S,10)
-        decoded = F.relu(h1_0+h1_3)  # (B,dim*4,S,10)
-
-        decoded = F.relu(self.decoder_batch_norm4(
-            self.decoder_fc4(decoded)))  # (B,4,S,10)
+        h1_0 = self.decoder_instance_norm0(
+            self.decoder_fc0(transformed))  # (B,dim*4,S,1)
+        h1_1 = F.relu(self.decoder_instance_norm1(
+            self.decoder_fc1(transformed)))  # (B,dim,S,1)
+        h1_2 = F.relu(self.decoder_instance_norm2(
+            self.decoder_fc2(h1_1)))  # (B,dim,S,1)
+        h1_3 = self.decoder_instance_norm3(
+            self.decoder_fc3(h1_2))  # (B,dim*4,S,1)
+        decoded = F.relu(h1_0+h1_3)  # (B,dim*4,S,1)
 
         # Branch
         # syn_cls = self.branch_fc0(decoded)+ self.cls.permute(0,2,1,3)#大跨residual connect#(16,10,8,1)
         #syn_cls = F.relu(syn_cls)
-        syn_cls = clss.permute(0, 2, 1, 3)  # ((B,10,S,1)
+        syn_cls = clss  # ((B,S,10,1)
 
-        syn_geo = self.sigmoid_brach1(self.branch_fc1(
-            decoded)) - 0.5 + geo.permute(0, 3, 1, 2)  # 大跨residual connect#(B,4,S,1)
+        syn_geo = \
+            self.sigmoid_brach1(self.branch_fc1(decoded)).permute(0, 2, 1, 3).contiguous()\
+            - 0.5 \
+            + geo.permute(0, 1, 3,
+                          2).contiguous()  # 大跨residual connect#(B,S,4,1)
         #syn_geo = (syn_geo*element_std)+element_mean
 
         # Synthesized layout
-        res = torch.cat((syn_cls, syn_geo), 1).squeeze().permute(
-            0, 2, 1).contiguous()  # (B,S,14)
+        res = torch.cat((syn_cls, syn_geo), 2).squeeze()  # (B,S,14)
 
         # Remove redundancy
         '''mask_l = [torch.cat([torch.ones(l,feature_size),torch.zeros(maximum_elements_num-l,feature_size)]) for l in input_length.cpu().numpy()]
         mask = torch.stack(mask_l)
         mask = mask.to(self.device)'''
-        res = res.masked_fill(
-            input_length.unsqueeze(-1).repeat(1, 1, res.shape[-1]), value=torch.tensor(0))
+        #res = res.masked_fill(input_length.unsqueeze(-1).repeat(1, 1, res.shape[-1]), value=torch.tensor(0))
 
         return (res, input_length)
 
@@ -166,7 +146,7 @@ class WireframeDiscriminator(nn.Module):
                 kernel_size=self.render_size >> num_resblocks,
                 stride=1,
                 bias=False),
-            nn.BatchNorm2d(1024),
+            nn.SyncBatchNorm(1024),
             nn.ReLU(),
             nn.Conv2d(1024, 1, kernel_size=1, stride=1, bias=True),
             nn.Sigmoid()
@@ -197,7 +177,7 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.bn1 = nn.SyncBatchNorm(out_channels)
         self.relu = nn.ReLU()
         self.conv2 = nn.Conv2d(
             out_channels,
@@ -207,7 +187,7 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.bn2 = nn.SyncBatchNorm(out_channels)
 
         self.conv_downsample = nn.Conv2d(
             in_channels,
@@ -217,7 +197,7 @@ class ResidualBlock(nn.Module):
             padding=kernel_size >> 1,
             bias=False
         )
-        self.bn_downsample = nn.BatchNorm2d(out_channels)
+        self.bn_downsample = nn.SyncBatchNorm(out_channels)
 
     def forward(self, x):
         #residual = x
@@ -240,7 +220,7 @@ def weight_init(m):
         m.weight.data.normal_(0, 0.02)
     elif class_name.find('Linear') != -1:
         m.weight.data.normal_(0, 0.02)
-    elif class_name.find('Norm') != -1:
+    elif class_name.find('BatchNorm') != -1:
         m.weight.data.normal_(1.0, 0.02)
 
 
