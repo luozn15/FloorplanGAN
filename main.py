@@ -44,13 +44,16 @@ def setup():
     cfg.TENSORBOARD.ANNOTATION = os.popen("git log --pretty=oneline").read()\
         .split("\n")[0]\
         .replace(' ', '\n', 1)
+    cfg.freeze()
+    os.makedirs(cfg.PATH.LOG_DIR+'/'+cfg.MANUAL.DATE +
+                ' '+cfg.MANUAL.TIME, exist_ok=True)
+    with open(cfg.PATH.LOG_DIR+'/'+cfg.MANUAL.DATE+' '+cfg.MANUAL.TIME+'/'+'config.yaml', "w") as f:
+        f.write(cfg.dump())
     return cfg
 
 
 def train():
     cfg = setup()
-    date = cfg.MANUAL.DATE
-    time_ = cfg.MANUAL.TIME
 
     print('dataset:\t{}'.format(cfg.DATASET.NAME))
     print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
@@ -59,8 +62,7 @@ def train():
     local_rank = int(os.environ['LOCAL_RANK'])
     device = torch.device("cuda", local_rank)
     real_dataset = wireframeDataset_Rplan(cfg)
-    checkpoint = './params/params_rplan_{0}.pkl'.format(date)
-    log_dir = cfg.PATH.LOG_DIR
+    checkpoint = './params/params_rplan_{0}.pkl'.format(cfg.MANUAL.DATE)
     batch_size = cfg.DATASET.BATCHSIZE
 
     ddp_sampler = DistributedSampler(real_dataset)
@@ -86,7 +88,7 @@ def train():
     generator.apply(weight_init)
 
     discriminator = WireframeDiscriminator(
-        dataset=real_dataset, renderer=renderer).to(device)
+        dataset=real_dataset, renderer=renderer, cfg=cfg).to(device)
     discriminator.apply(weight_init)
 
     if os.path.exists(checkpoint):
@@ -131,27 +133,26 @@ def train():
         fig_fixed = get_figure(renderer.render(fixed_z[0].detach()))
 
         # 训练
-        os.makedirs(log_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=log_dir+'/'+date+' '+time_)
+        writer = SummaryWriter(log_dir=cfg.PATH.LOG_DIR +
+                               '/'+cfg.MANUAL.DATE+' '+cfg.MANUAL.TIME)
         writer.add_text('annotation', cfg.TENSORBOARD.ANNOTATION, 1)
         writer.add_figure('fixed Z Image', fig_fixed, 1)
 
     # Start training.
+    EPSILON = 10e-8
     for ec in range(num_epochs):
         epoch = ec + epoch_last
         print('Start to train epoch %d.' % (epoch))
         real_dataloader.sampler.set_epoch(epoch)
 
         discriminator_losses = []
+        discriminator_losses_real = []
+        discriminator_losses_fake = []
         generator_losses = []
         boundray_losses = []
 
         for batch_i, real_images in enumerate(real_dataloader, 0):
             n_iter += 1
-            if n_iter % 10 == 9:
-                print('\t iter {0} | batch {1} of epoch {2}'.format(
-                    n_iter, batch_i, epoch))
-
             real_images = [x.to(device) for x in real_images]
 
             random_images = generate_random_layout(real_dataset, batch_size)
@@ -160,34 +161,39 @@ def train():
             # 训练判别器
             generator.eval()
             discriminator.train()
-            discriminator.zero_grad()
             discriminator_optimizer.zero_grad()
 
             pred_real = discriminator(real_images[0], real_images[1])
             d_real_loss = adversarial_loss(
-                pred_real, torch.ones_like(pred_real))
+                pred_real, torch.ones_like(pred_real)*0.9)
+            w_real = 1./(pred_real.mean().item()+EPSILON)
+
             fake_images = generator(random_images[0], random_images[1])
             pred_fake = discriminator(
                 fake_images[0].detach(), fake_images[1].detach())
             d_fake_loss = adversarial_loss(
                 pred_fake, torch.zeros_like(pred_fake))
+            w_fake = 1./(1.-pred_fake.mean().item()+EPSILON)
 
-            d_loss = (d_real_loss + d_fake_loss)/2.
+            d_loss = (w_real * d_real_loss + w_fake *
+                      d_fake_loss)/(w_real+w_fake)
+            #d_loss = d_fake_loss
             d_loss.backward()
 
             discriminator_optimizer.step()
-            discriminator_losses.append(
-                d_loss.cpu().detach().numpy())
+            discriminator_losses_real.append(
+                d_real_loss.cpu().detach().numpy())
+            discriminator_losses_fake.append(
+                d_fake_loss.cpu().detach().numpy())
+            discriminator_losses.append(d_loss.cpu().detach().numpy())
 
             if (batch_i+1) % 2 == 0:
                 # 训练生成器
                 generator.train()
                 discriminator.eval()
-                generator.zero_grad()
                 generator_optimizer.zero_grad()
 
                 boundray_loss = bounds_check(fake_images[0])
-                boundray_loss.backward(retain_graph=True)
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
                 g_loss = adversarial_loss(
@@ -202,15 +208,19 @@ def train():
                 boundray_losses.append(
                     boundray_loss.cpu().detach().numpy())
 
+            if n_iter % 10 == 9:
+                print('\t iter {0} | batch {1} of epoch {2}'.format(
+                    n_iter, batch_i, epoch))
+
         # skip saving interval
-        if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS-1:
+        if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != 0:
             continue
         # TensorboardX
         if dist.get_rank() == 0:
             tensorboard_write(
                 writer,
                 n_iter, epoch, num_epochs,
-                discriminator_losses, generator_losses, boundray_losses,
+                discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
                 generator, discriminator, renderer,
                 pred_real, pred_fake, real_images, random_images, fixed_z
             )
@@ -232,10 +242,12 @@ def train():
 def tensorboard_write(
     writer,
     n_iter, epoch, num_epochs,
-    discriminator_losses, generator_losses, boundray_losses,
+    discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
     generator, discriminator, renderer,
     pred_real, pred_fake, real_images, random_images, fixed_z
 ):
+    discriminator_losses_real = np.array(discriminator_losses_real)
+    discriminator_losses_fake = np.array(discriminator_losses_fake)
     discriminator_losses = np.array(discriminator_losses)
     generator_losses = np.array(generator_losses)
     boundray_losses = np.array(boundray_losses)
@@ -267,10 +279,14 @@ def tensorboard_write(
         print('D_layer_zero_grad')
 
     # 记录loss
-    writer.add_scalar('Discriminator Loss',
-                      discriminator_losses.mean(), n_iter)
-    writer.add_scalar('Generator Loss',
-                      generator_losses.mean(), n_iter)
+    writer.add_scalar(
+        'Discriminator Loss Real', discriminator_losses_real.mean(), n_iter)
+    writer.add_scalar(
+        'Discriminator Loss Fake', discriminator_losses_fake.mean(), n_iter)
+    writer.add_scalar(
+        'Discriminator Loss', discriminator_losses.mean(), n_iter)
+    writer.add_scalar(
+        'Generator Loss', generator_losses.mean(), n_iter)
     writer.add_scalar(
         'Boundray Loss', boundray_losses.mean(), n_iter)
     #writer.add_scalar('Gradient_penalties', gradient_penalties.mean(), n_iter)
@@ -289,11 +305,14 @@ def tensorboard_write(
         random_images[0], random_images[1]).detach().cpu().numpy()
     fake_pred = pred_fake.detach().cpu().numpy()
 
-    acc = plt.figure(figsize=(10, 5))
-    ax = acc.add_subplot(111)
-    ax.hist(real_pred, alpha=0.5, density=True, bins=60)
-    ax.hist(random_pred, alpha=0.5, density=True, bins=60)
-    ax.hist(fake_pred, alpha=0.5, density=True, bins=60)
+    acc = plt.figure(figsize=(8, 5))
+    ax = acc.gca()
+    ax.hist(real_pred, alpha=0.5, density=True,
+            bins=60, range=(0, 1), label='real')
+    ax.hist(random_pred, alpha=0.5, density=True,
+            bins=60, range=(0, 1), label='random')
+    ax.hist(fake_pred, alpha=0.5, density=True,
+            bins=60, range=(0, 1), label='fake')
     ax.legend(['real_pred', 'random_pred', 'fake_pred'])
     writer.add_figure('prediction', acc, n_iter)
 
