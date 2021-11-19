@@ -232,6 +232,7 @@ def train():
                 n_iter, epoch, num_epochs,
                 discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
                 generator, discriminator, renderer,
+                discriminator_optimizer, generator_optimizer,
                 pred_real, pred_fake, real_images, random_images, fixed_z
             )
 
@@ -254,6 +255,7 @@ def tensorboard_write(
     n_iter, epoch, num_epochs,
     discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
     generator, discriminator, renderer,
+    discriminator_optimizer, generator_optimizer,
     pred_real, pred_fake, real_images, random_images, fixed_z
 ):
     discriminator_losses_real = np.array(discriminator_losses_real)
@@ -300,6 +302,12 @@ def tensorboard_write(
     writer.add_scalar(
         'Boundray Loss', boundray_losses.mean(), n_iter)
     #writer.add_scalar('Gradient_penalties', gradient_penalties.mean(), n_iter)
+
+    # 记录学习率
+    writer.add_scalar(
+        'Discriminator Learning Rate', discriminator_optimizer.state_dict()['param_groups'][0]['lr'], n_iter)
+    writer.add_scalar(
+        'Generator Learning Rate', generator_optimizer.state_dict()['param_groups'][0]['lr'], n_iter)
 
     # 记录网络权重
     for name, param in discriminator.named_parameters():
