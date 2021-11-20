@@ -103,11 +103,8 @@ class Generator(nn.Module):
         #syn_cls = F.relu(syn_cls)
         syn_cls = clss  # ((B,S,10,1)
 
-        syn_geo = \
-            self.sigmoid_brach1(self.branch_fc1(decoded)).permute(0, 2, 1, 3).contiguous()\
-            - 0.5 \
-            + geo.permute(0, 1, 3,
-                          2).contiguous()  # 大跨residual connect#(B,S,4,1)
+        syn_geo = self.sigmoid_brach1(self.branch_fc1(decoded)).permute(0, 2, 1, 3).contiguous()\
+            # - 0.5 + geo.permute(0, 1, 3,2).contiguous()  # 大跨residual connect#(B,S,4,1)
         #syn_geo = (syn_geo*element_std)+element_mean
 
         # Synthesized layout
