@@ -77,7 +77,6 @@ def train():
     adversarial_loss = torch.nn.BCELoss(reduction='none')
     # 初始化
     ######################################################
-    learning_rate = cfg.TRAIN.LEARNING_RATE
     num_epochs = cfg.TRAIN.NUM_EPOCHS
     ######################################################
 
@@ -110,11 +109,12 @@ def train():
                         local_rank], output_device=local_rank, broadcast_buffers=False)
 
     # Initialize optimizers.
-    generator_optimizer = optim.Adam(generator.parameters(), learning_rate)
+    generator_optimizer = optim.Adam(
+        generator.parameters(), cfg.MODEL.GENERATOR.LEARNING_RATE)
     generator_scheduler = optim.lr_scheduler.ExponentialLR(
         generator_optimizer, 0.1)
     discriminator_optimizer = optim.Adam(
-        discriminator.parameters(), learning_rate)
+        discriminator.parameters(), cfg.MODEL.DISCRIMINATOR.LEARNING_RATE)
     discriminator_scheduler = optim.lr_scheduler.ExponentialLR(
         discriminator_optimizer, 0.1)
 
