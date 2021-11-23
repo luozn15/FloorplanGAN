@@ -31,7 +31,7 @@ PATH:
     - "../../data_RPLAN/pkls"
     - "D:\\luozn\\data_RPLAN\\pkls"
     - "F:\\luozn\\data_RPLAN\\pkls"
-    - "E:\\Seafile\\data_RPLAN\\pkls"
+    - "/mnt/e/Seafile/data_RPLAN/pkls"
     - "E:\\Seafile\\data_RPLAN\\pkls"
   Z_FILE: "fixed_z/fixed_xywh_rplan_1030.pkl"
   LOG_DIR: "runs_rplan"

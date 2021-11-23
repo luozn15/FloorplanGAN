@@ -31,7 +31,7 @@ class Generator(nn.Module):
 
         # Batchsize=16, Chanel=dim*4 ,S=8, O=10
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim*4*self.class_num, nhead=8, batch_first=True)
+            d_model=dim*4*self.class_num, nhead=8)
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer, num_layers=3)
 
@@ -83,8 +83,8 @@ class Generator(nn.Module):
 
         # Self relation
         transformed = self.transformer_encoder(
-            src=encoded, src_key_padding_mask=input_length)  # (B,S,dim*4*10)
-        transformed = transformed.permute(0, 2, 1).contiguous(
+            src=encoded.permute(1,0,2), src_key_padding_mask=input_length)  # (S,B,dim*4*10)
+        transformed = transformed.permute(1,2,0).contiguous(
         ).unsqueeze(-1)  # (B,dim*4*10,S,1)
 
         # Decoder

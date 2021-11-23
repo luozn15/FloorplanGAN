@@ -6,6 +6,7 @@ import os
 import sys
 import socket
 import pickle
+from threading import local
 import numpy as np
 from matplotlib import pyplot as plt
 from datetime import datetime, timedelta
@@ -52,23 +53,31 @@ def setup():
     return cfg
 
 
-def train():
+def train(parallel=False):
     cfg = setup()
 
     print('dataset:\t{}'.format(cfg.DATASET.NAME))
     print('hostname:\t{}'.format(cfg.MANUAL.HOSTNAME))
     print('date:\t\t{}'.format(cfg.MANUAL.DATE))
 
-    local_rank = int(os.environ['LOCAL_RANK'])
-    device = torch.device("cuda", local_rank)
+    if parallel:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cuda:0")
     real_dataset = wireframeDataset_Rplan(cfg)
     checkpoint = './params/params_rplan_{0}.pkl'.format(cfg.MANUAL.DATE)
     batch_size = cfg.DATASET.BATCHSIZE
 
-    ddp_sampler = DistributedSampler(real_dataset)
-    real_dataloader = DataLoader(
-        real_dataset, batch_size, sampler=ddp_sampler,
-        num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
+    if parallel:
+        ddp_sampler = DistributedSampler(real_dataset)
+        real_dataloader = DataLoader(
+            real_dataset, batch_size, sampler=ddp_sampler,
+            num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
+    else:
+        real_dataloader = DataLoader(
+            real_dataset, batch_size,
+            num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
 
     # 固定的随机layout
     fixed_z_file = cfg.PATH.Z_FILE
@@ -103,10 +112,11 @@ def train():
         # global step
         n_iter = -1
         print('create_new_model')
-    generator = DDP(generator, device_ids=[
-                    local_rank], output_device=local_rank, broadcast_buffers=False)
-    discriminator = DDP(discriminator, device_ids=[
+    if parallel:
+        generator = DDP(generator, device_ids=[
                         local_rank], output_device=local_rank, broadcast_buffers=False)
+        discriminator = DDP(discriminator, device_ids=[
+                            local_rank], output_device=local_rank, broadcast_buffers=False)
 
     # Initialize optimizers.
     generator_optimizer = optim.Adam(
@@ -118,7 +128,7 @@ def train():
     discriminator_scheduler = optim.lr_scheduler.ExponentialLR(
         discriminator_optimizer, 0.1)
 
-    if dist.get_rank() == 0:
+    if not parallel or dist.get_rank() == 0:
         print('amount of parameters in generator:\t',
               sum(p.numel() for p in generator.parameters() if p.requires_grad))
         print('amount of parameters in discriminator:\t',
@@ -147,8 +157,8 @@ def train():
     for ec in range(num_epochs):
         epoch = ec + epoch_last
         print('Start to train epoch %d.' % (epoch))
-        real_dataloader.sampler.set_epoch(epoch)
-
+        if parallel:
+            real_dataloader.sampler.set_epoch(epoch)
         discriminator_losses = []
         discriminator_losses_real = []
         discriminator_losses_fake = []
@@ -219,8 +229,12 @@ def train():
                     boundray_loss.cpu().detach().numpy())
 
             if n_iter % 10 == 9:
-                print('\t local_rank {} | iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f} | w_real {:6.4f} | w_fake {:6.4f}'
-                      .format(dist.get_rank(), n_iter, batch_i, epoch, g_loss.item(), d_loss.item(), w_real.mean().item(), w_fake.mean().item()))
+                if parallel:
+                    print('\t local_rank {} | iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f} | w_real {:6.4f} | w_fake {:6.4f}'
+                          .format(dist.get_rank(), n_iter, batch_i, epoch, g_loss.item(), d_loss.item(), w_real.mean().item(), w_fake.mean().item()))
+                else:
+                    print('\t iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f} | w_real {:6.4f} | w_fake {:6.4f}'
+                          .format(n_iter, batch_i, epoch, g_loss.item(), d_loss.item(), w_real.mean().item(), w_fake.mean().item()))
 
         if epoch % cfg.MODEL.GENERATOR.DECAY_EPOCHS == cfg.MODEL.GENERATOR.DECAY_EPOCHS - 1:
             generator_scheduler.step()
@@ -230,7 +244,7 @@ def train():
         if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != 0:
             continue
         # TensorboardX
-        if dist.get_rank() == 0:
+        if not parallel or dist.get_rank() == 0:
             tensorboard_write(
                 writer,
                 n_iter, epoch, num_epochs,
@@ -352,9 +366,27 @@ def tensorboard_write(
 
 
 if __name__ == '__main__':
+
     # torchrun --nnodes=1 --nproc_per_node=2 main.py
-    import os
-    local_rank = int(os.environ["LOCAL_RANK"])
-    with torch.cuda.device(local_rank):
-        torch.distributed.init_process_group(backend='nccl')
-        train()
+    #import os
+    #local_rank = int(os.environ["LOCAL_RANK"])
+
+    # python -m torch.distributed.launch main.py
+
+    if torch.cuda.device_count() > 1:
+        # torchrun --nnodes=1 --nproc_per_node=2 main.py
+        #import os
+        #local_rank = int(os.environ["LOCAL_RANK"])
+
+        # python -m torch.distributed.launch main.py
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--local_rank", type=int)
+        args = parser.parse_args()
+        local_rank = args.local_rank
+        print(local_rank)
+        with torch.cuda.device(local_rank):
+            torch.distributed.init_process_group(backend='nccl')
+            train(parallel=True)
+    else:
+        train(parallel=False)
