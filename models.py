@@ -8,6 +8,34 @@ import numpy as np
 # Stacked relation module
 
 
+class RelationNonLocal(nn.Module):
+    def __init__(self, device, C):
+        super(RelationNonLocal, self).__init__()
+        self.device = device
+        self.conv_fv = nn.Conv2d(C, C, kernel_size=1, stride=1)
+        self.conv_fk = nn.Conv2d(C, C, kernel_size=1, stride=1)
+        self.conv_fq = nn.Conv2d(C, C, kernel_size=1, stride=1)
+        self.conv_fr = nn.Conv2d(C, C, kernel_size=1, stride=1)
+
+        self.to(self.device)
+
+    def forward(self, input_):  # (16,256*9,46,1)
+        N, C, H, W = input_.shape
+        f_v = self.conv_fv(input_)  # (N, C, H, W)
+        f_k = self.conv_fk(input_)
+        f_q = self.conv_fq(input_)
+
+        f_k = f_k.reshape([N, C, H*W]).permute(0, 2, 1)  # (N,H*W,C)
+        f_q = f_q.reshape([N, C, H*W])
+        w = torch.matmul(f_k, f_q)/(H*W)  # (N,H*W,H*W)
+
+        f_r = torch.matmul(w.permute(0, 2, 1), f_v.reshape(
+            [N, C, H*W]).permute(0, 2, 1)).permute(0, 2, 1)
+        f_r = f_r.reshape(N, C, H, W)
+        f_r = self.conv_fr(f_r)
+        return f_r
+
+
 class Generator(nn.Module):
     def __init__(self, dataset):  # feature_size, class_num, element_num):
         super(Generator, self).__init__()
@@ -30,10 +58,24 @@ class Generator(nn.Module):
         self.encoder_instance_norm3 = nn.InstanceNorm2d(dim*4)
 
         # Batchsize=16, Chanel=dim*4 ,S=8, O=10
-        encoder_layer = nn.TransformerEncoderLayer(
+        """encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim*4*self.class_num, nhead=8)
         self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=3)
+            encoder_layer, num_layers=3)"""
+        #
+        self.relation_nonLocal0 = RelationNonLocal(
+            self.device, 256*self.class_num)
+        self.relation_bn0 = nn.BatchNorm2d(256*self.class_num)
+        self.relation_nonLocal1 = RelationNonLocal(
+            self.device, 256*self.class_num)
+        self.relation_bn1 = nn.BatchNorm2d(256*self.class_num)
+
+        self.relation_nonLocal2 = RelationNonLocal(
+            self.device, 256*self.class_num)
+        self.relation_bn2 = nn.BatchNorm2d(256*self.class_num)
+        self.relation_nonLocal3 = RelationNonLocal(
+            self.device, 256*self.class_num)
+        self.relation_bn3 = nn.BatchNorm2d(256*self.class_num)
 
         # Decoder, two fully connected layers.
         self.decoder_fc0 = nn.Conv2d(
@@ -57,7 +99,7 @@ class Generator(nn.Module):
         self.branch_fc1 = nn.Conv2d(
             dim*4, 4, kernel_size=1, stride=1)  # (16,4,8,1)
         # self.branch_fc1 = nn.Linear(self.class_num, 1)  # (16,4,8,1)
-        self.sigmoid_brach1 = nn.Sigmoid()
+        #self.sigmoid_brach1 = nn.Sigmoid()
 
     def forward(self, input_data, input_length):  # (B,S,14),(B,S)
         batch_size, maximum_elements_num, feature_size = input_data.shape
@@ -82,10 +124,20 @@ class Generator(nn.Module):
             batch_size, self.element_num, -1)  # (B,S,dim*4*10)
 
         # Self relation
-        transformed = self.transformer_encoder(
-            src=encoded.permute(1,0,2), src_key_padding_mask=input_length)  # (S,B,dim*4*10)
-        transformed = transformed.permute(1,2,0).contiguous(
-        ).unsqueeze(-1)  # (B,dim*4*10,S,1)
+        """transformed = self.transformer_encoder(
+            src=encoded.permute(1, 0, 2), src_key_padding_mask=input_length)  # (S,B,dim*4*10)
+        transformed = transformed.permute(1, 2, 0).contiguous(
+        ).unsqueeze(-1)  # (B,dim*4*10,S,1)"""
+        # Stacked relation module
+        relation0 = F.relu(self.relation_bn0(self.relation_nonLocal0(encoded)))
+        relation1 = F.relu(self.relation_bn1(
+            self.relation_nonLocal1(relation0)))
+        residual_block1 = encoded + relation1
+        relation2 = F.relu(self.relation_bn2(
+            self.relation_nonLocal2(residual_block1)))
+        relation3 = F.relu(self.relation_bn3(
+            self.relation_nonLocal3(relation2)))
+        transformed = residual_block1 + relation3
 
         # Decoder
         h1_0 = self.decoder_instance_norm0(
@@ -104,7 +156,8 @@ class Generator(nn.Module):
         syn_cls = clss  # ((B,S,10,1)
 
         syn_geo = self.sigmoid_brach1(self.branch_fc1(decoded)).permute(0, 2, 1, 3).contiguous()\
-            # - 0.5 + geo.permute(0, 1, 3,2).contiguous()  # 大跨residual connect#(B,S,4,1)
+            + geo.permute(0, 1, 3,
+                          2).contiguous()  # 大跨residual connect#(B,S,4,1)
         #syn_geo = (syn_geo*element_std)+element_mean
 
         # Synthesized layout

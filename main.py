@@ -122,7 +122,7 @@ def train(parallel=False):
     generator_optimizer = optim.Adam(
         generator.parameters(), cfg.MODEL.GENERATOR.LEARNING_RATE)
     generator_scheduler = optim.lr_scheduler.ExponentialLR(
-        generator_optimizer, 0.1)
+        generator_optimizer, 0.5)
     discriminator_optimizer = optim.Adam(
         discriminator.parameters(), cfg.MODEL.DISCRIMINATOR.LEARNING_RATE)
     discriminator_scheduler = optim.lr_scheduler.ExponentialLR(
