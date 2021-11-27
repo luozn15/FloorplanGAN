@@ -27,6 +27,28 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 
+def real_loss(D_out, smooth=False):
+    if smooth:
+        labels = torch.ones_like(D_out) * (np.random.rand()*(1-smooth)+smooth)
+    else:
+        labels = torch.ones_like(D_out)
+    #crit = nn.BCEWithLogitsLoss()
+    crit = nn.BCELoss()
+    loss = crit(D_out, labels)
+    return loss
+
+
+def fake_loss(D_out, smooth=False):
+    if smooth:
+        labels = torch.ones_like(D_out) * (np.random.rand()*smooth)
+    else:
+        labels = torch.zeros_like(D_out)
+    #crit = nn.BCEWithLogitsLoss()
+    crit = nn.BCELoss()
+    loss = crit(D_out, labels)
+    return loss
+
+
 def setup():
     """
     Create configs and perform basic setups.
@@ -76,14 +98,12 @@ def train(parallel=False):
             num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
     else:
         real_dataloader = DataLoader(
-            real_dataset, batch_size,
+            real_dataset, batch_size, shuffle=True,
             num_workers=cfg.SYSTEM.NUM_WORKERS, drop_last=True, pin_memory=True)
 
     # 固定的随机layout
     fixed_z_file = cfg.PATH.Z_FILE
 
-    # Loss function
-    adversarial_loss = torch.nn.BCELoss(reduction='none')
     # 初始化
     ######################################################
     num_epochs = cfg.TRAIN.NUM_EPOCHS
@@ -93,11 +113,10 @@ def train(parallel=False):
         render_size=cfg.MODEL.RENDERER.RENDERING_SIZE, class_num=real_dataset.enc_len)
 
     generator = Generator(dataset=real_dataset).to(device)
-    generator.apply(weight_init)
-
+    # generator.apply(weight_init)
     discriminator = WireframeDiscriminator(
         dataset=real_dataset, renderer=renderer, cfg=cfg).to(device)
-    discriminator.apply(weight_init)
+    # discriminator.apply(weight_init)
 
     if os.path.exists(checkpoint):
         checkpoint = torch.load(checkpoint)
@@ -121,12 +140,17 @@ def train(parallel=False):
     # Initialize optimizers.
     generator_optimizer = optim.Adam(
         generator.parameters(), cfg.MODEL.GENERATOR.LEARNING_RATE)
-    generator_scheduler = optim.lr_scheduler.ExponentialLR(
-        generator_optimizer, 0.5)
     discriminator_optimizer = optim.Adam(
         discriminator.parameters(), cfg.MODEL.DISCRIMINATOR.LEARNING_RATE)
+    """generator_scheduler = optim.lr_scheduler.ExponentialLR(
+        generator_optimizer, 0.9)
     discriminator_scheduler = optim.lr_scheduler.ExponentialLR(
-        discriminator_optimizer, 0.1)
+        discriminator_optimizer, 0.9)"""
+    epoch_step = len(real_dataset) // batch_size
+    generator_scheduler = optim.lr_scheduler.StepLR(
+        generator_optimizer, step_size=10*epoch_step, gamma=0.9)  # 每30 epoch decay lr
+    discriminator_scheduler = optim.lr_scheduler.StepLR(
+        discriminator_optimizer, step_size=10*epoch_step, gamma=0.9)
 
     if not parallel or dist.get_rank() == 0:
         print('amount of parameters in generator:\t',
@@ -163,42 +187,42 @@ def train(parallel=False):
         discriminator_losses_real = []
         discriminator_losses_fake = []
         generator_losses = []
-        boundray_losses = []
+        #boundray_losses = []
 
         for batch_i, real_images in enumerate(real_dataloader, 0):
             n_iter += 1
+            generator.train()
+            discriminator.train()
+
             real_images = [x.to(device) for x in real_images]
 
             random_images = generate_random_layout(real_dataset, batch_size)
             random_images = [torch.tensor(x).to(device) for x in random_images]
 
-            generator.train()
-            discriminator.train()
-            if batch_i % 5 == 0:
+            if batch_i % 2 == 0:
                 # 训练判别器
                 # generator.eval()
                 # discriminator.train()
                 discriminator_optimizer.zero_grad()
 
                 pred_real = discriminator(real_images[0], real_images[1])
-                d_real_loss = adversarial_loss(
-                    pred_real, torch.ones_like(pred_real))
+                d_real_loss = real_loss(pred_real, smooth=0.9)
                 #w_real = 1./(pred_real.mean().item()+EPSILON)
-                w_real = (1.-pred_real)**2
+                #w_real = (1.-pred_real)**2
 
                 fake_images = generator(random_images[0], random_images[1])
                 pred_fake = discriminator(
                     fake_images[0].detach(), fake_images[1].detach())
-                d_fake_loss = adversarial_loss(
-                    pred_fake, torch.zeros_like(pred_fake))
+                d_fake_loss = fake_loss(pred_fake, smooth=0.1)
                 #w_fake = 1./(1.-pred_fake.mean().item()+EPSILON)
-                w_fake = pred_fake**2
+                #w_fake = pred_fake**2
 
-                d_loss = ((w_real * d_real_loss + w_fake *
-                          d_fake_loss)/(w_real+w_fake)).mean()
+                #d_loss = ((w_real * d_real_loss + w_fake * d_fake_loss)/(w_real+w_fake)).mean()
+                d_loss = d_real_loss+d_fake_loss
                 #d_loss = d_fake_loss
                 d_loss.backward()
                 discriminator_optimizer.step()
+                discriminator_scheduler.step()
                 #print("D: pred_real {:6.4f} pred_fake {:6.4f}".format(pred_real.mean().item(), pred_fake.mean().item()))
                 discriminator_losses_real.append(
                     d_real_loss.cpu().detach().numpy())
@@ -206,35 +230,35 @@ def train(parallel=False):
                     d_fake_loss.cpu().detach().numpy())
                 discriminator_losses.append(d_loss.cpu().detach().numpy())
 
+            if batch_i % 2 == 0:
+                generator_optimizer.zero_grad()
             if batch_i % 1 == 0:
                 # 训练生成器
                 # generator.train()
                 # discriminator.eval()
-                generator_optimizer.zero_grad()
 
                 fake_images = generator(random_images[0], random_images[1])
-                boundray_loss = bounds_check(fake_images[0])
+                #boundray_loss = bounds_check(fake_images[0])
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
-                g_loss = adversarial_loss(
-                    pred_fake, torch.ones_like(pred_fake)).mean()
-
-                sum_loss = g_loss + boundray_loss
-                sum_loss.backward()
+                g_loss = real_loss(pred_fake, False)
+                #sum_loss = g_loss + boundray_loss
+                g_loss.backward()
+            if batch_i % 2 == 0:
                 generator_optimizer.step()
+                generator_scheduler.step()
                 #print("G: pred_fake {:6.4f}".format(pred_fake.mean().item()))
                 generator_losses.append(
                     g_loss.cpu().detach().numpy())
-                boundray_losses.append(
-                    boundray_loss.cpu().detach().numpy())
+                # boundray_losses.append(boundray_loss.cpu().detach().numpy())
 
             if n_iter % 10 == 9:
                 if parallel:
-                    print('\t local_rank {} | iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f} | w_real {:6.4f} | w_fake {:6.4f}'
-                          .format(dist.get_rank(), n_iter, batch_i, epoch, g_loss.item(), d_loss.item(), w_real.mean().item(), w_fake.mean().item()))
+                    print('\t local_rank {} | iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f}'
+                          .format(dist.get_rank(), n_iter, batch_i, epoch, g_loss.item(), d_loss.item()))
                 else:
-                    print('\t iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f} | w_real {:6.4f} | w_fake {:6.4f}'
-                          .format(n_iter, batch_i, epoch, g_loss.item(), d_loss.item(), w_real.mean().item(), w_fake.mean().item()))
+                    print('\t iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f}'
+                          .format(n_iter, batch_i, epoch, g_loss.item(), d_loss.item()))
 
         if epoch % cfg.MODEL.GENERATOR.DECAY_EPOCHS == cfg.MODEL.GENERATOR.DECAY_EPOCHS - 1:
             generator_scheduler.step()
@@ -248,7 +272,8 @@ def train(parallel=False):
             tensorboard_write(
                 writer,
                 n_iter, epoch, num_epochs,
-                discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
+                # boundray_losses,
+                discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses,
                 generator, discriminator, renderer,
                 discriminator_optimizer, generator_optimizer,
                 pred_real, pred_fake, real_images, random_images, fixed_z
@@ -271,7 +296,8 @@ def train(parallel=False):
 def tensorboard_write(
     writer,
     n_iter, epoch, num_epochs,
-    discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses, boundray_losses,
+    # boundray_losses,
+    discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses,
     generator, discriminator, renderer,
     discriminator_optimizer, generator_optimizer,
     pred_real, pred_fake, real_images, random_images, fixed_z
@@ -280,7 +306,7 @@ def tensorboard_write(
     discriminator_losses_fake = np.array(discriminator_losses_fake)
     discriminator_losses = np.array(discriminator_losses)
     generator_losses = np.array(generator_losses)
-    boundray_losses = np.array(boundray_losses)
+    #boundray_losses = np.array(boundray_losses)
 
     print('N_iter {:7d} | Epoch [{:5d}/{:5d}] | discriminator_loss: {:6.4f} | generator_loss: {:6.4f}'.
           format(n_iter, epoch, num_epochs, discriminator_losses.mean(), generator_losses.mean()))
@@ -317,8 +343,8 @@ def tensorboard_write(
         'Discriminator Loss', discriminator_losses.mean(), n_iter)
     writer.add_scalar(
         'Generator Loss', generator_losses.mean(), n_iter)
-    writer.add_scalar(
-        'Boundray Loss', boundray_losses.mean(), n_iter)
+    # writer.add_scalar(
+    #    'Boundray Loss', boundray_losses.mean(), n_iter)
     #writer.add_scalar('Gradient_penalties', gradient_penalties.mean(), n_iter)
 
     # 记录学习率
@@ -366,7 +392,8 @@ def tensorboard_write(
 
 
 if __name__ == '__main__':
-
+    import argparse
+    parser = argparse.ArgumentParser()
     # torchrun --nnodes=1 --nproc_per_node=2 main.py
     #import os
     #local_rank = int(os.environ["LOCAL_RANK"])
@@ -379,8 +406,6 @@ if __name__ == '__main__':
         #local_rank = int(os.environ["LOCAL_RANK"])
 
         # python -m torch.distributed.launch main.py
-        import argparse
-        parser = argparse.ArgumentParser()
         parser.add_argument("--local_rank", type=int)
         args = parser.parse_args()
         local_rank = args.local_rank
@@ -389,4 +414,5 @@ if __name__ == '__main__':
             torch.distributed.init_process_group(backend='nccl')
             train(parallel=True)
     else:
+        # CUDA_VISIBLE_DEVICES=0 python main.py
         train(parallel=False)
