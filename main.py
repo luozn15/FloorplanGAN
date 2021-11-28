@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from config import get_cfg
 from dataset import generate_random_layout, wireframeDataset_Rplan
 from models import Generator, WireframeDiscriminator, weight_init, renderer_g2v
-from utils import bounds_check, get_figure, draw_table
+from utils import bounds_check, get_figure, draw_table, negative_wh_check
 
 import torch
 import torch.nn as nn
@@ -148,9 +148,9 @@ def train(parallel=False):
         discriminator_optimizer, 0.9)"""
     epoch_step = len(real_dataset) // batch_size
     generator_scheduler = optim.lr_scheduler.StepLR(
-        generator_optimizer, step_size=10*epoch_step, gamma=0.9)  # 每30 epoch decay lr
+        generator_optimizer, step_size=cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS*epoch_step, gamma=0.9)  # 每30 epoch decay lr
     discriminator_scheduler = optim.lr_scheduler.StepLR(
-        discriminator_optimizer, step_size=10*epoch_step, gamma=0.9)
+        discriminator_optimizer, step_size=cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS*epoch_step, gamma=0.9)
 
     if not parallel or dist.get_rank() == 0:
         print('amount of parameters in generator:\t',
@@ -187,7 +187,8 @@ def train(parallel=False):
         discriminator_losses_real = []
         discriminator_losses_fake = []
         generator_losses = []
-        #boundray_losses = []
+        boundray_losses = []
+        negative_wh_losses = []
 
         for batch_i, real_images in enumerate(real_dataloader, 0):
             n_iter += 1
@@ -238,19 +239,22 @@ def train(parallel=False):
                 # discriminator.eval()
 
                 fake_images = generator(random_images[0], random_images[1])
-                #boundray_loss = bounds_check(fake_images[0])
+                boundray_loss = bounds_check(fake_images[0])
+                negative_wh_loss = negative_wh_check(fake_images[0])
 
                 pred_fake = discriminator(fake_images[0], fake_images[1])
                 g_loss = real_loss(pred_fake, False)
-                #sum_loss = g_loss + boundray_loss
-                g_loss.backward()
+                sum_loss = g_loss + boundray_loss + negative_wh_loss
+                sum_loss.backward()
             if batch_i % 2 == 0:
                 generator_optimizer.step()
                 generator_scheduler.step()
                 #print("G: pred_fake {:6.4f}".format(pred_fake.mean().item()))
                 generator_losses.append(
                     g_loss.cpu().detach().numpy())
-                # boundray_losses.append(boundray_loss.cpu().detach().numpy())
+                boundray_losses.append(boundray_loss.cpu().detach().numpy())
+                negative_wh_losses.append(
+                    negative_wh_loss.cpu().detach().numpy())
 
             if n_iter % 10 == 9:
                 if parallel:
@@ -260,10 +264,10 @@ def train(parallel=False):
                     print('\t iter {} | batch {} of epoch {} | G_loss {:6.4f} | D_loss {:6.4f}'
                           .format(n_iter, batch_i, epoch, g_loss.item(), d_loss.item()))
 
-        if epoch % cfg.MODEL.GENERATOR.DECAY_EPOCHS == cfg.MODEL.GENERATOR.DECAY_EPOCHS - 1:
+        """if epoch % cfg.MODEL.GENERATOR.DECAY_EPOCHS == cfg.MODEL.GENERATOR.DECAY_EPOCHS - 1:
             generator_scheduler.step()
         if epoch % cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS == cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS - 1:
-            discriminator_scheduler.step()
+            discriminator_scheduler.step()"""
         # skip saving interval
         if epoch % cfg.TENSORBOARD.SAVE_INTERVAL_EPOCHS != 0:
             continue
@@ -272,7 +276,7 @@ def train(parallel=False):
             tensorboard_write(
                 writer,
                 n_iter, epoch, num_epochs,
-                # boundray_losses,
+                boundray_losses, negative_wh_losses,
                 discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses,
                 generator, discriminator, renderer,
                 discriminator_optimizer, generator_optimizer,
@@ -296,7 +300,7 @@ def train(parallel=False):
 def tensorboard_write(
     writer,
     n_iter, epoch, num_epochs,
-    # boundray_losses,
+    boundray_losses, negative_wh_losses,
     discriminator_losses_real, discriminator_losses_fake, discriminator_losses, generator_losses,
     generator, discriminator, renderer,
     discriminator_optimizer, generator_optimizer,
@@ -306,7 +310,8 @@ def tensorboard_write(
     discriminator_losses_fake = np.array(discriminator_losses_fake)
     discriminator_losses = np.array(discriminator_losses)
     generator_losses = np.array(generator_losses)
-    #boundray_losses = np.array(boundray_losses)
+    boundray_losses = np.array(boundray_losses)
+    negative_wh_losses = np.array(negative_wh_losses)
 
     print('N_iter {:7d} | Epoch [{:5d}/{:5d}] | discriminator_loss: {:6.4f} | generator_loss: {:6.4f}'.
           format(n_iter, epoch, num_epochs, discriminator_losses.mean(), generator_losses.mean()))
@@ -343,8 +348,10 @@ def tensorboard_write(
         'Discriminator Loss', discriminator_losses.mean(), n_iter)
     writer.add_scalar(
         'Generator Loss', generator_losses.mean(), n_iter)
-    # writer.add_scalar(
-    #    'Boundray Loss', boundray_losses.mean(), n_iter)
+    writer.add_scalar(
+        'Boundray Loss', boundray_losses.mean(), n_iter)
+    writer.add_scalar(
+        'Negative WH Loss', negative_wh_losses.mean(), n_iter)
     #writer.add_scalar('Gradient_penalties', gradient_penalties.mean(), n_iter)
 
     # 记录学习率
