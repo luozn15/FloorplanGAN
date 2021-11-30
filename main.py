@@ -148,7 +148,7 @@ def train(parallel=False):
         discriminator_optimizer, 0.9)"""
     epoch_step = len(real_dataset) // batch_size
     generator_scheduler = optim.lr_scheduler.StepLR(
-        generator_optimizer, step_size=cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS*epoch_step, gamma=0.9)  # 每30 epoch decay lr
+        generator_optimizer, step_size=cfg.MODEL.GENERATOR.DECAY_EPOCHS*epoch_step, gamma=0.9)  # 每30 epoch decay lr
     discriminator_scheduler = optim.lr_scheduler.StepLR(
         discriminator_optimizer, step_size=cfg.MODEL.DISCRIMINATOR.DECAY_EPOCHS*epoch_step, gamma=0.9)
 
