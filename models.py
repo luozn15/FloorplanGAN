@@ -154,8 +154,9 @@ class Generator(nn.Module):
         # syn_cls = self.branch_fc0(decoded)+ self.cls.permute(0,2,1,3)#大跨residual connect#(16,10,8,1)
         #syn_cls = F.relu(syn_cls)
         syn_cls = clss  # ((B,S,10,1)
-
-        syn_geo = self.branch_fc1(decoded).permute(0, 2, 1, 3).contiguous()\
+        syn_turb = self.branch_fc1(decoded)  # (B,4,S,1)
+        syn_turb[:, 2, :, :] = 0  # 保持面积不变
+        syn_geo = syn_turb.permute(0, 2, 1, 3).contiguous()\
             + geo.permute(0, 1, 3,
                           2).contiguous()  # 大跨residual connect#(B,S,4,1)
         #syn_geo = (syn_geo*element_std)+element_mean

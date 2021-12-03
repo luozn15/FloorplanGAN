@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-from torch.distributed.optim import DistributedOptimizer
+#from torch.distributed.optim import DistributedOptimizer
 import torch.optim as optim
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
