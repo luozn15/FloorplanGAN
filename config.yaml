@@ -1,0 +1,37 @@
+---
+SYSTEM:
+  NUM_GPUS: 2
+  NUM_WORKERS: 4
+  HOSTNAMES:
+    - ubuntuStation
+    - DESKTOP-HRFSC59
+    - Work-Station
+    - LAPTOP-LUOZN
+    - DESKTOP-57EV4E4
+DATASET:
+  NAME: "rplan"
+  SUBSET: "names_0-1_1-1_2-1_3-1_4-0_5-0_6-0_7-1_8-0_9-1.pkl"
+  BATCHSIZE: 128
+MODEL:
+  DISCRIMINATOR:
+    LEARNING_RATE: 0.000005
+    DECAY_EPOCHS: 10
+    NUM_RESBLOCKS: 3
+  GENERATOR:
+    LEARNING_RATE: 0.00002
+    DECAY_EPOCHS: 15
+  RENDERER:
+    RENDERING_SIZE: 64
+TRAIN:
+  NUM_EPOCHS: 3000
+TENSORBOARD:
+  SAVE_INTERVAL_EPOCHS: 10
+PATH:
+  RPLAN:
+    - "../../data_RPLAN/pkls"
+    - "D:\\luozn\\data_RPLAN\\pkls"
+    - "F:\\luozn\\data_RPLAN\\pkls"
+    - "/mnt/e/Seafile/data_RPLAN/pkls"
+    - "E:\\Seafile\\data_RPLAN\\pkls"
+  Z_FILE: "fixed_z/fixed_xyaw_rplan_1127.pkl"
+  LOG_DIR: "runs_rplan"
