@@ -38,6 +38,10 @@ def name_particular_rooms(path, rooms):
     return
 
 
+def pertub(array, amp=0.005):
+    return array + (np.random.rand(*array.shape)-0.5)*amp
+
+
 def generate_random_layout(dataset, batch_size):
     rooms = dataset.rect_types[np.random.randint(
         dataset.rect_types.shape[0], size=batch_size), :]
@@ -51,7 +55,7 @@ def generate_random_layout(dataset, batch_size):
     ).numpy().astype(np.float32)
 
     # N,46,4
-    loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
+    """loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
         .reshape((rooms.shape[0], rooms.shape[1], 4))/dataset.img_size
     loc[loc < 0] = 0
     loc[loc > 1] = 1
@@ -62,7 +66,19 @@ def generate_random_layout(dataset, batch_size):
     yc = np.expand_dims((y0+y1)/2, -1)
     h = np.expand_dims(abs(y1-y0), -1)
     h[h <= 0] = 0.02
-    area_root = (w*h)**0.5
+    area_root = (w*h)**0.5"""
+    xc = np.empty_like(rooms,dtype=np.float32)
+    yc = np.empty_like(rooms,dtype=np.float32)
+    area_root = np.empty_like(rooms,dtype=np.float32)
+    for i,batch in enumerate(rooms):
+        for j,classid in enumerate(batch):
+            xc[i,j]=np.random.choice(dataset.Xc[classid], 1)
+            yc[i,j]=np.random.choice(dataset.Yc[classid], 1)
+            area_root[i,j]=np.random.choice(dataset.Ar[classid], 1)
+    xc = pertub(xc)[:, :, np.newaxis]
+    yc = pertub(yc)[:, :, np.newaxis]
+    area_root = pertub(area_root)[:, :, np.newaxis]
+    w = area_root
 
     # N,46,13
     v = np.concatenate([encoded, xc, yc, area_root, w], axis=2)
@@ -179,11 +195,11 @@ class wireframeDataset_Rplan(Dataset):
         rect_types = []  # 房间类型
         coordinates = {classid: []
                        for classid in self.dict_id_class.keys()}  # 统计坐标(x1,y1,x2,y2)
-        Xc = []
-        Yc = []
-        W = []
-        H = []
-        Ar = []
+        Xc = {classid: [] for classid in self.dict_id_class.keys()}
+        Yc = {classid: [] for classid in self.dict_id_class.keys()}
+        W = {classid: [] for classid in self.dict_id_class.keys()}
+        H = {classid: [] for classid in self.dict_id_class.keys()}
+        Ar = {classid: [] for classid in self.dict_id_class.keys()}
         for name, layout in tqdm(self.data.items()):
             layout = {classid: layout[classid]
                       for classid in self.dict_id_class}
@@ -200,11 +216,11 @@ class wireframeDataset_Rplan(Dataset):
                     (x0, y1), (x1, y0) = r
                     x0, y1, x1, y0 = x0/self.img_size, y1 / \
                         self.img_size, x1/self.img_size, y0/self.img_size
-                    Xc.append((x0+x1)/2)
-                    W.append(abs(x1-x0))
-                    Yc.append((y0+y1)/2)
-                    H.append(abs(y1-y0))
-                    Ar.append((abs(x1-x0)*abs(y1-y0))**0.5)
+                    Xc[classid].append((x0+x1)/2)
+                    W[classid].append(abs(x1-x0))
+                    Yc[classid].append((y0+y1)/2)
+                    H[classid].append(abs(y1-y0))
+                    Ar[classid].append((abs(x1-x0)*abs(y1-y0))**0.5)
             rect_types.append(rect_type)
             dict_samplename_Nrects[name] = num_rect
         x = np.array(list(dict_samplename_Nrects.values()))
@@ -228,12 +244,11 @@ class wireframeDataset_Rplan(Dataset):
                 for r in rect_types],
             dtype=np.int
         )
-        self.Xc = np.array(Xc)
-        self.Yc = np.array(Yc)
-        self.W = np.array(W)
-        self.H = np.array(H)
-        self.Ar = np.array(Ar)
-        print(len(Xc))
+        self.Xc = {classid: np.array(lst) for classid ,lst in Xc.items()}
+        self.Yc = {classid: np.array(lst) for classid ,lst in Yc.items()}
+        self.W = {classid: np.array(lst) for classid ,lst in W.items()}
+        self.H = {classid: np.array(lst) for classid ,lst in H.items()}
+        self.Ar = {classid: np.array(lst) for classid ,lst in Ar.items()}
         # 长宽比统计
         #ratio_as = np.array([(r[0][:,:-4].sum(axis=-1)>0.5) * (r[0][:,-2]/r[0][:,-1]) for r in self])
         #self.ratio_as = (np.percentile(np.array(ratio), 10,axis = 0), np.percentile(np.array(ratio), 90,axis = 0))
