@@ -49,6 +49,7 @@ def generate_random_layout(dataset, batch_size):
     ).to(torch.int64),
         num_classes=dataset.enc_len
     ).numpy().astype(np.float32)
+
     # N,46,4
     loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
         .reshape((rooms.shape[0], rooms.shape[1], 4))/dataset.img_size
@@ -178,6 +179,11 @@ class wireframeDataset_Rplan(Dataset):
         rect_types = []  # 房间类型
         coordinates = {classid: []
                        for classid in self.dict_id_class.keys()}  # 统计坐标(x1,y1,x2,y2)
+        Xc = []
+        Yc = []
+        W = []
+        H = []
+        Ar = []
         for name, layout in tqdm(self.data.items()):
             layout = {classid: layout[classid]
                       for classid in self.dict_id_class}
@@ -188,6 +194,17 @@ class wireframeDataset_Rplan(Dataset):
                 for rect in rects:
                     rect_type.append(classid)
                     coordinates[classid].append(np.array(rect).reshape(-1))
+
+                area_root = []
+                for r in rects:
+                    (x0, y1), (x1, y0) = r
+                    x0, y1, x1, y0 = x0/self.img_size, y1 / \
+                        self.img_size, x1/self.img_size, y0/self.img_size
+                    Xc.append((x0+x1)/2)
+                    W.append(abs(x1-x0))
+                    Yc.append((y0+y1)/2)
+                    H.append(abs(y1-y0))
+                    Ar.append((abs(x1-x0)*abs(y1-y0))**0.5)
             rect_types.append(rect_type)
             dict_samplename_Nrects[name] = num_rect
         x = np.array(list(dict_samplename_Nrects.values()))
@@ -211,6 +228,12 @@ class wireframeDataset_Rplan(Dataset):
                 for r in rect_types],
             dtype=np.int
         )
+        self.Xc = np.array(Xc)
+        self.Yc = np.array(Yc)
+        self.W = np.array(W)
+        self.H = np.array(H)
+        self.Ar = np.array(Ar)
+        print(len(Xc))
         # 长宽比统计
         #ratio_as = np.array([(r[0][:,:-4].sum(axis=-1)>0.5) * (r[0][:,-2]/r[0][:,-1]) for r in self])
         #self.ratio_as = (np.percentile(np.array(ratio), 10,axis = 0), np.percentile(np.array(ratio), 90,axis = 0))
