@@ -284,15 +284,16 @@ def train(parallel=False):
             )
 
             # 保存模型参数
-            torch.save({
-                'generator_state_dict': generator.state_dict(),
-                'generator_optimizer_state_dict': generator_optimizer.state_dict(),
-                'discriminator_state_dict': discriminator.state_dict(),
-                'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
-                'epoch': epoch,
-                'n_iter': n_iter,
-            }, checkpoint)
-            print('\tparams saved to ' + checkpoint)
+            if epoch % 100 == 0:
+                torch.save({
+                    'generator_state_dict': generator.state_dict(),
+                    'generator_optimizer_state_dict': generator_optimizer.state_dict(),
+                    'discriminator_state_dict': discriminator.state_dict(),
+                    'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
+                    'epoch': epoch,
+                    'n_iter': n_iter,
+                }, "{}_{}.pkl".format(checkpoint.split(".pkl")[0],epoch))
+                print('\tparams saved to ' + checkpoint)
 
     writer.close()
 
