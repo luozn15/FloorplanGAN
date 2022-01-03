@@ -41,7 +41,6 @@ def name_particular_rooms(path, rooms):
 def pertub(array, amp=0.005):
     return array + (np.random.rand(*array.shape)-0.5)*amp
 
-
 def generate_random_layout(dataset, batch_size):
     rooms = dataset.rect_types[np.random.randint(
         dataset.rect_types.shape[0], size=batch_size), :]
@@ -53,9 +52,8 @@ def generate_random_layout(dataset, batch_size):
     ).to(torch.int64),
         num_classes=dataset.enc_len
     ).numpy().astype(np.float32)
-
     # N,46,4
-    """loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
+    loc = np.array([np.random.multivariate_normal(mean=dataset.mean[room], cov=dataset.cov[room]) for room in rooms.flatten()])\
         .reshape((rooms.shape[0], rooms.shape[1], 4))/dataset.img_size
     loc[loc < 0] = 0
     loc[loc > 1] = 1
@@ -66,8 +64,8 @@ def generate_random_layout(dataset, batch_size):
     yc = np.expand_dims((y0+y1)/2, -1)
     h = np.expand_dims(abs(y1-y0), -1)
     h[h <= 0] = 0.02
-    area_root = (w*h)**0.5"""
-    xc = np.empty_like(rooms,dtype=np.float32)
+    area_root = (w*h)**0.5
+    """xc = np.empty_like(rooms,dtype=np.float32)
     yc = np.empty_like(rooms,dtype=np.float32)
     area_root = np.empty_like(rooms,dtype=np.float32)
     for i,batch in enumerate(rooms):
@@ -78,7 +76,7 @@ def generate_random_layout(dataset, batch_size):
     xc = pertub(xc)[:, :, np.newaxis]
     yc = pertub(yc)[:, :, np.newaxis]
     area_root = pertub(area_root)[:, :, np.newaxis]
-    w = area_root
+    w = area_root"""
 
     # N,46,13
     v = np.concatenate([encoded, xc, yc, area_root, w], axis=2)
