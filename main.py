@@ -58,9 +58,12 @@ def setup():
 
     # manually add attributes
     cfg.MANUAL.HOSTNAME = socket.gethostname()
-    cfg.MANUAL.RPLAN_PATH = cfg.PATH.RPLAN[
-        cfg.SYSTEM.HOSTNAMES.index(cfg.MANUAL.HOSTNAME)
-    ]
+    if cfg.MANUAL.HOSTNAME in cfg.SYSTEM.HOSTNAMES:
+        cfg.MANUAL.RPLAN_PATH = cfg.PATH.RPLAN[
+            cfg.SYSTEM.HOSTNAMES.index(cfg.MANUAL.HOSTNAME)
+        ]
+    else:
+        cfg.MANUAL.RPLAN_PATH = "./data_FloorplanGAN/pkls"
     #cfg.MANUAL.DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
     cfg.MANUAL.DATE = datetime.now().strftime('%Y-%m-%d')
     cfg.MANUAL.TIME = datetime.now().strftime('%H-%M-%S')
@@ -284,16 +287,16 @@ def train(parallel=False):
             )
 
             # 保存模型参数
-            if epoch % 100 == 0:
-                torch.save({
-                    'generator_state_dict': generator.state_dict(),
-                    'generator_optimizer_state_dict': generator_optimizer.state_dict(),
-                    'discriminator_state_dict': discriminator.state_dict(),
-                    'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
-                    'epoch': epoch,
-                    'n_iter': n_iter,
-                }, "{}_{}.pkl".format(checkpoint.split(".pkl")[0],epoch))
-                print('\tparams saved to ' + checkpoint)
+
+            torch.save({
+                'generator_state_dict': generator.state_dict(),
+                'generator_optimizer_state_dict': generator_optimizer.state_dict(),
+                'discriminator_state_dict': discriminator.state_dict(),
+                'discriminator_optimizer_state_dict': discriminator_optimizer.state_dict(),
+                'epoch': epoch,
+                'n_iter': n_iter,
+            }, "{}.pkl".format(checkpoint.split(".pkl")[0]))
+            print('\tparams saved to ' + "{}.pkl".format(checkpoint.split(".pkl")[0]))
 
     writer.close()
 

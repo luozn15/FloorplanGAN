@@ -1,6 +1,8 @@
 /params
 /runs_rplan
+/data_floorplanGAN
 /__pycache__
 /.ipynb_checkpoints
 /.vscode
+config*
 *.pyc
