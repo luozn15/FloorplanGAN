@@ -63,4 +63,4 @@ Coming soon...
 1. luozn15@qq.com (Z. Luo)
 2. wxhuang@mail.tsinghua.edu.cn (W. Huang*)
 ### Acknowledgement
-This work is supported by the grant No.51778315 of National Science Foundation of China.We would like to thank licensed architects and master students of architecture for participating in our user study.
+This work is supported by the grant No.52178019 of National Science Foundation of China.We would like to thank the architects and master students of architecture for participating in our user study.
