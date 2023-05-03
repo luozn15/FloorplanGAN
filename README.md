@@ -18,7 +18,7 @@
 ``` 
 ### Dataset  
 we use a publicly available dataset *RPlan* ([http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html](http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html)), which contains 80k+ well annotated real residential floorplans in PNG format.  
-After the filtering and vectorization (using [Pyportace](https://pypi.org/project/pypotrace/)) described in our paper, we get a training set of 17154 samples and a test set of 2000 samples, all in vector format. The preprocessed data can be download [here](https://cloud.tsinghua.edu.cn/f/875b2bdb2b95408f8259/?dl=1).  
+After the filtering and vectorization (using [Pyportace](https://pypi.org/project/pypotrace/)) described in our paper, we get a training set of 17154 samples and a test set of 2000 samples, all in vector format. The preprocessed data can be download [here](https://pan.baidu.com/s/1giCKexJcZdzgi28Gg47ltw?pwd=2dqo).  
 Make directory `data_FloorplanGAN` in root directory of this project, and unzip the downloaded zipfile in this folder. 
 Directory structures should be like:
 ```
