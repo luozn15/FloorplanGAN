@@ -14,7 +14,7 @@
 ```
 (base)$ conda create -n floorplangan python=3.8 -y
 (base)$ conda activate floorplangan
-(floorplangan)$ pip install -r requirement.txt
+(floorplangan)$ pip install -r requirements.txt
 ``` 
 ### Dataset  
 we use a publicly available dataset *RPlan* ([http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html](http://staff.ustc.edu.cn/~fuxm/projects/DeepLayout/index.html)), which contains 80k+ well annotated real residential floorplans in PNG format.  
